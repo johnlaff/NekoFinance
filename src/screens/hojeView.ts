@@ -218,19 +218,20 @@ export function upcomingIncome(
 }
 
 /**
- * Referência da faixa do termômetro em linguagem natural — os limiares são ABSOLUTOS
- * (canônicos da planilha de ensino), então a frase cita o R$ da fronteira.
+ * Referência da faixa do termômetro em linguagem natural — os limiares são ABSOLUTOS, então a
+ * frase é a fronteira em R$ e nada além dela: de onde a régua vem é didática, e ela mora no
+ * termo tocável do termômetro.
  */
 export function saldoBandPhrase(key: SaldoBand): string {
   switch (key) {
     case "comfortable":
-      return "acima dos R$ 2.000 da régua da planilha";
+      return "acima dos R$ 2.000";
     case "ok":
-      return "entre R$ 1.000 e R$ 2.000 na régua da planilha";
+      return "entre R$ 1.000 e R$ 2.000";
     case "tight":
-      return "entre zero e R$ 1.000 — a faixa de atenção da régua";
+      return "entre zero e R$ 1.000";
     case "negative":
-      return "abaixo de zero — a régua pede socorro ao caixa";
+      return "abaixo de zero";
     case "critical":
       return "mais de R$ 500 abaixo de zero";
   }

@@ -52,34 +52,22 @@
 }
 
 .hoje__verdict b {
-  display: block;
   color: var(--text);
   font-weight: var(--fw-medium);
 }
 
-.hoje__teach {
-  max-width: 52ch;
-  margin: var(--space-5) auto 0;
+/* ---- Portas do veredito: a pergunta, o gesto e a legenda do teto numa linha só ---- */
+
+.hoje__doors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-5) 0 0;
   font-size: var(--fs-sm);
   color: var(--text-faint);
   line-height: var(--lh-normal);
-}
-
-/* ---- Curadoria: a assistente assina a ordem, nunca os números ---- */
-
-.hoje__curated {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-5);
-  font-size: var(--fs-sm);
-  color: var(--text-faint);
-}
-
-.hoje__curated-cat {
-  color: var(--accent);
-  flex: none;
 }
 
 /* ---- Malha de cards ----
@@ -335,6 +323,16 @@
 
 .hoje__insight p {
   margin: 0;
+}
+
+/* A observação e a conta impressa dividem a coluna ao lado da faísca. */
+.hoje__insight-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hoje__insight-body .nk-receipt {
+  margin-top: var(--space-5);
 }
 
 .hoje__insight b {
@@ -672,29 +670,24 @@
   animation: hoje-pop var(--dur-base) var(--ease-standard) both;
 }
 
-.hoje__curated {
+.hoje__blockday {
   animation: hoje-pop var(--dur-base) var(--ease-standard) both
     calc(var(--dur-stagger-step) * 1);
 }
 
-.hoje__blockday {
+.hoje__insight--month {
   animation: hoje-pop var(--dur-base) var(--ease-standard) both
     calc(var(--dur-stagger-step) * 2);
 }
 
-.hoje__insight--month {
+.hoje__card--moves {
   animation: hoje-pop var(--dur-base) var(--ease-standard) both
     calc(var(--dur-stagger-step) * 3);
 }
 
-.hoje__card--moves {
-  animation: hoje-pop var(--dur-base) var(--ease-standard) both
-    calc(var(--dur-stagger-step) * 4);
-}
-
 .hoje__card--saldo {
   animation: hoje-pop var(--dur-base) var(--ease-standard) both
-    calc(var(--dur-stagger-step) * 5);
+    calc(var(--dur-stagger-step) * 4);
 }
 
 @keyframes hoje-pop {

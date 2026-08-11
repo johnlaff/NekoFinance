@@ -10,6 +10,12 @@ import { ModeChip } from "../design-system/components/ModeChip";
 import { Money } from "../design-system/components/Money";
 import { NekoMark } from "../design-system/components/NekoMark";
 import { NoRecordDash } from "../design-system/components/NoRecordDash";
+import {
+  CollapsedReceipt,
+  Receipt,
+  type ReceiptLine,
+} from "../design-system/components/Receipt";
+import { useShowReceipt } from "../hooks/useShowReceipt";
 import { isTauri } from "../lib/env";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { MES, monthOf, saldoBand } from "../lib/nkFormat";
@@ -40,7 +46,6 @@ import {
   saldoGaugeFraction,
   upcomingIncome,
   type DashboardSummary,
-  type Forecast,
   type MonthInsight,
   type OpenInvoicesView,
   type UpcomingBill,
@@ -79,6 +84,16 @@ const VERDICT_HOW_CARD = {
   title: "Como funciona",
   body: "O número é o limite que protege o caixa e a economia do ano. No cartão, a compra pesa na fatura seguinte — por isso o dia acompanha as faturas, e o teto fica como referência.",
 };
+// O teto zerado tem duas saídas, e cada leitor só tem uma: oferecer a reserva a quem não a
+// mapeou é conselho vazio, e falar de "sem reserva mapeada" a quem tem é falar da falta alheia.
+const VERDICT_HOW_ZERO_RESERVE = {
+  title: "Como funciona",
+  body: "O teto zera quando o saldo projetado cruza o zero — e é para isso que a reserva existe: sacar dela e programar a reposição. Nenhum gasto de hoje fecha o buraco sozinho.",
+};
+const VERDICT_HOW_ZERO_NO_RESERVE = {
+  title: "Como funciona",
+  body: "O teto zera quando o saldo projetado cruza o zero. Sem reserva mapeada para socorrer o caixa, o caminho é a performance do mês: entrar mais, ou sair menos.",
+};
 const FATURAS_TERM = {
   title: "O velocímetro de quem vive no crédito",
   body: "Cada compra soma na fatura do cartão usado — é aqui que o seu gasto variável mora. O Diário fica zerado de propósito: ele é para débito e Pix, que mexem o saldo na hora.",
@@ -87,6 +102,10 @@ const WHY_CEILING_STOPPED_TERM = {
   title: "Por que o teto parou de morder?",
   body: "A faixa de 20–30% é média ANUAL — a régua da economia só trava o dia enquanto ela está viva. Uma vez rompida, o déficit é do ano que passou: nenhum gasto de hoje o desfaz, e travar o teto puniria o que não volta. O caminho é a performance do mês, não um dia sem gastar.",
 };
+const WHY_CEILING_STOPPED_ZERO_TERM = {
+  title: "Por que o teto parou de morder?",
+  body: "Zerar a economia para não tocar na reserva é, na ordem do método, a troca certa. A faixa de 20–30% é média anual: rompida, ela sai do teto — o caminho é a performance do mês, não um dia sem gastar.",
+};
 
 export function DashboardScreen() {
   const { navigate, openCompose } = useNekoApp();
@@ -94,6 +113,7 @@ export function DashboardScreen() {
   const forecastQ = useCommand("get_forecast", fetchForecast);
   const billsQ = useCommand("get_upcoming_bills", fetchUpcomingBills);
   const cardsQ = useCommand("list_cards", fetchCards);
+  const showReceipt = useShowReceipt();
   // A saudação lê o relógio UMA vez por montagem: cumprimento não muda no meio da visita.
   const [greeting] = useState(() => greetingForHour(new Date().getHours()));
 
@@ -150,9 +170,8 @@ export function DashboardScreen() {
     : "o fim do mês";
   const saldoHoje =
     monthDaily.find((d) => d.date === today)?.balance_cents ?? summary.balance;
-  // O selo do veredito nomeia a MESMA régua que a didática logo abaixo: as duas descrevendo
-  // cálculos diferentes é como a tela passou a afirmar "sem dia no vermelho" ao lado de
-  // "nenhum dia no vermelho à vista".
+  // O herói observa o dado: constata o que a régua que morde permite hoje e, só no aperto,
+  // devolve a decisão como pergunta. O selo é a única linha de corpo do bloco (regra 42).
   const capReason = spendCapReason({
     bindingGuardrail: forecast.binding_guardrail,
     deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
@@ -161,10 +180,26 @@ export function DashboardScreen() {
   });
   const verdictSeal =
     capReason.kind === "savings"
-      ? "Sem tocar na economia planejada do ano."
-      : capReason.kind === "deficit"
-        ? "O mês já abre o bico — o teto de hoje é zero."
-        : "Sem deixar nenhum dia no vermelho.";
+      ? "— sem tocar na economia do ano."
+      : "— sem nenhum dia no vermelho.";
+  // A faixa 20–30% é média ANUAL: rompida, ela sai do teto mas não da tela — a pergunta
+  // que nomeia o estado fica, e a resposta mora atrás dela. Lê o VEREDITO publicado (os 5
+  // estados do motor), nunca o sinal de `savings_headroom_cents` — é o que corrige o falso
+  // positivo de 22% (dentro da faixa) que o sinal sozinho acusava. Sem registro do ano não
+  // há diagnóstico a dar: a pergunta só aparece quando existe resposta.
+  const bandVerdict = forecast.savings_band_verdict;
+  const bandTerm =
+    !savingsBandBroken(bandVerdict) || capReason.kind === "savings"
+      ? null
+      : bandVerdict === "zero_by_choice"
+        ? WHY_CEILING_STOPPED_ZERO_TERM
+        : bandVerdict === "below_band"
+          ? WHY_CEILING_STOPPED_TERM
+          : null;
+  // A reserva só é oferecida quando ela existe: sem conta mapeada ou zerada, a saída é outra
+  // (subir a performance), e sugerir um saque impossível seria conselho vazio.
+  const hasReserve =
+    summary.reserve_state === "verdict" || summary.reserve_state === "estimate";
 
   return (
     <div className="hoje neko-app">
@@ -180,39 +215,67 @@ export function DashboardScreen() {
         </span>
         <h1>{greeting}</h1>
         <p className="hoje__verdict">
-          Pode gastar hoje{" "}
-          <span className="hoje__verdict-money">
-            <Money cents={safeToSpend} size="inherit" />
-          </span>
-          <b>{verdictSeal}</b>
+          {capReason.kind === "deficit" ? (
+            <>
+              O teto de hoje é zero — {redDayPhrase(capReason.date, today)} o saldo
+              encosta no vermelho. <b>O que dá para mover?</b>
+            </>
+          ) : (
+            <>
+              Pode gastar hoje{" "}
+              <span className="hoje__verdict-money">
+                <Money cents={safeToSpend} size="inherit" />
+              </span>{" "}
+              <b>{verdictSeal}</b>
+            </>
+          )}
         </p>
-        <p className="hoje__teach">
-          <TeachLine
-            summary={summary}
-            forecast={forecast}
-            cardMode={cardMode}
-            monthEndLabel={monthEndLabel}
-            today={today}
-            onOpenTeto={() => navigate("teto")}
-            onUseReserve={(shortfallCents, date) =>
-              openCompose({
-                mode: "new",
-                type: "entrada",
-                date,
-                description: "Saque da reserva de emergência",
-                amountCents: shortfallCents,
-              })
+        {/* As portas do veredito: a didática atrás da pergunta, o gesto que o método manda
+            como ação visível (regra 3) e, no modo cartão, a legenda do teto — que ali não é
+            impressa por mais ninguém. */}
+        <p className="hoje__doors">
+          {cardMode ? (
+            <CeilingCaption summary={summary} onOpenTeto={() => navigate("teto")} />
+          ) : null}
+          <InfoPopover
+            term={
+              capReason.kind === "deficit"
+                ? hasReserve
+                  ? VERDICT_HOW_ZERO_RESERVE
+                  : VERDICT_HOW_ZERO_NO_RESERVE
+                : cardMode
+                  ? VERDICT_HOW_CARD
+                  : VERDICT_HOW_DEBIT
             }
-          />
+            label="Como funciona? — veredito de hoje"
+            hideMarker
+          >
+            <span className="hoje__how">Como funciona?</span>
+          </InfoPopover>
+          {bandTerm ? (
+            <InfoPopover term={bandTerm} hideMarker>
+              <span className="hoje__how">Por que o teto parou de morder?</span>
+            </InfoPopover>
+          ) : null}
+          {capReason.kind === "deficit" && hasReserve ? (
+            <button
+              type="button"
+              className="hoje__link"
+              onClick={() =>
+                openCompose({
+                  mode: "new",
+                  type: "entrada",
+                  date: capReason.date,
+                  description: "Saque da reserva de emergência",
+                  amountCents: capReason.shortfallCents,
+                })
+              }
+            >
+              Lançar o saque da reserva
+            </button>
+          ) : null}
         </p>
       </section>
-
-      <p className="hoje__curated">
-        <span className="hoje__curated-cat" aria-hidden="true">
-          <MiaAvatar width={14} height={14} />
-        </span>
-        A Mia separou o que importa hoje — a ordem muda com o seu dia, os números nunca.
-      </p>
 
       <HojeGrid
         deckMode={cardMode && invoices.count > 0}
@@ -231,7 +294,12 @@ export function DashboardScreen() {
         }
         monthInsightNote={
           insight ? (
-            <MonthInsightNote insight={insight} month={month} today={today} />
+            <MonthInsightNote
+              insight={insight}
+              month={month}
+              monthEndLabel={monthEndLabel}
+              showReceipt={showReceipt}
+            />
           ) : null
         }
         moves={
@@ -361,153 +429,53 @@ function HojeGrid({
   );
 }
 
-/** Camada didática do veredito: o que é o número + o estado do teto. */
-function TeachLine({
+/**
+ * O dia em que o saldo cruza o zero. Dentro do mês corrente basta o número do dia; fora dele o
+ * operando ganha o mês, senão "dia 3" seria ambíguo entre dois setembros de distância.
+ */
+function redDayPhrase(date: string, today: string): string {
+  const day = Number(date.split("-")[2] ?? 0);
+  return date.slice(0, 7) === today.slice(0, 7)
+    ? `dia ${day}`
+    : `dia ${faturaDayLabel(date)}`;
+}
+
+/**
+ * A legenda do teto no herói — só no modo cartão, onde nenhum outro bloco imprime o número
+ * (no débito ele é o denominador da régua do Diário, e repeti-lo violaria a regra 41).
+ * Ação nunca se esconde: os estados sem teto mantêm o CTA.
+ */
+function CeilingCaption({
   summary,
-  forecast,
-  cardMode,
-  monthEndLabel,
-  today,
   onOpenTeto,
-  onUseReserve,
 }: {
   summary: DashboardSummary;
-  forecast: Forecast;
-  cardMode: boolean;
-  monthEndLabel: string;
-  today: string;
   onOpenTeto: () => void;
-  onUseReserve: (shortfallCents: number, date: string) => void;
 }) {
   const ceiling = summary.daily_budget;
-  const source = summary.daily_ceiling_source;
-
-  // O número é SÓ o guardrail que morde (caixa ou economia) — o teto nunca entra
-  // nele; é o segundo limite do dia. Uma frase sempre visível; a mecânica completa
-  // mora no "Como funciona" (didática atrás de pergunta, o padrão do método).
-  //
-  // Caixa zerado significa que o mês já abre o bico, e no método esse é o momento de ACIONAR a
-  // reserva — não de proibir o gasto. A frase aponta para o gesto, com o tamanho do buraco.
-  const reason = spendCapReason({
-    bindingGuardrail: forecast.binding_guardrail,
-    deepestBalanceCents: forecast.deepest_deficit?.balance_cents ?? 0,
-    deepestDate: forecast.deepest_deficit?.date ?? null,
-    today,
-  });
-  // A reserva só é oferecida quando ela existe: sem conta mapeada ou zerada, a saída é outra
-  // (subir a performance), e sugerir um saque impossível seria conselho vazio.
-  const hasReserve =
-    summary.reserve_state === "verdict" || summary.reserve_state === "estimate";
-  const numberPhrase =
-    reason.kind === "savings" ? (
-      "Este é o limite da economia: o maior gasto que mantém a meta do ano viva."
-    ) : reason.kind === "deficit" ? (
-      <>
-        Falta <Money cents={reason.shortfallCents} size="inherit" /> em{" "}
-        {faturaDayLabel(reason.date)}.{" "}
-        {hasReserve ? (
-          <>
-            É para isso que a reserva existe —{" "}
-            <button
-              type="button"
-              className="hoje__link"
-              onClick={() => onUseReserve(reason.shortfallCents, reason.date)}
-            >
-              lançar o saque
-            </button>{" "}
-            e programar a reposição.
-          </>
-        ) : (
-          "Sem reserva mapeada, o caminho é a performance do mês: entrar mais, ou sair menos."
-        )}
-      </>
-    ) : reason.date ? (
-      <>
-        Este é o limite do caixa: o maior gasto que o saldo aguenta até{" "}
-        {faturaDayLabel(reason.date)} sem nenhum dia no vermelho
-        {!reason.inCurrentMonth && (
-          <>
-            {" "}
-            — o ponto mais apertado do horizonte está em{" "}
-            {(MES[monthOf(reason.date)] ?? "").toLowerCase()}.
-          </>
-        )}
-        {reason.inCurrentMonth && "."}
-      </>
-    ) : (
-      `Este é o limite do caixa: o maior gasto que o saldo aguenta até ${monthEndLabel} sem nenhum dia no vermelho.`
-    );
-
-  // A faixa 20–30% é média ANUAL: rompida, ela sai do teto mas não da tela. O diagnóstico é o
-  // que aponta o caminho — e o caminho do método é performance do mês, não um dia sem gastar.
-  // Lê o VEREDITO publicado (os 5 estados do motor), nunca o sinal de savings_headroom_cents —
-  // é o que corrige o falso positivo de 22% (dentro da faixa) que o sinal sozinho acusava.
-  const verdict = forecast.savings_band_verdict;
-  const bandBroken = savingsBandBroken(verdict) && reason.kind !== "savings";
-
-  // Ação nunca se esconde: os estados sem teto mantêm o CTA visível; os estados
-  // informados encolhem a um rótulo curto com o valor.
-  const tetoClause =
-    source === "chosen" ? (
-      <>
-        {" "}
-        Teto:{" "}
+  switch (summary.daily_ceiling_source) {
+    case "chosen":
+      return (
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
-          <Money cents={ceiling} size="inherit" /> por dia
+          Teto: <Money cents={ceiling} size="inherit" /> por dia
         </button>
-        .
-      </>
-    ) : source === "estimate" ? (
-      <>
-        {" "}
-        Teto de referência: <Money cents={ceiling} size="inherit" />{" "}
-        <EstimateMark term={TETO_ESTIMATE_TERM} />.
-      </>
-    ) : summary.ceiling_proposal_pending ? (
-      <>
-        {" "}
+      );
+    case "estimate":
+      return (
+        <span>
+          Teto de referência: <Money cents={ceiling} size="inherit" />{" "}
+          <EstimateMark term={TETO_ESTIMATE_TERM} />
+        </span>
+      );
+    default:
+      return (
         <button type="button" className="hoje__link" onClick={onOpenTeto}>
-          Proposta do teto — revisar.
+          {summary.ceiling_proposal_pending
+            ? "Proposta do teto — revisar"
+            : "Estipular o teto"}
         </button>
-      </>
-    ) : (
-      <>
-        {" "}
-        Ainda sem teto diário.{" "}
-        <button type="button" className="hoje__link" onClick={onOpenTeto}>
-          Estipular o teto
-        </button>
-      </>
-    );
-
-  return (
-    <>
-      {numberPhrase}
-      {bandBroken && verdict === "zero_by_choice" ? (
-        <>
-          {" "}
-          Você zerou a economia para não tocar na reserva — na ordem do método, é a
-          troca certa.{" "}
-          <InfoPopover term={WHY_CEILING_STOPPED_TERM} hideMarker>
-            <span className="hoje__how">Por que o teto parou de morder?</span>
-          </InfoPopover>
-        </>
-      ) : bandBroken && verdict === "below_band" ? (
-        <>
-          {" "}
-          A economia do ano está abaixo dos 20% — a faixa é média anual, então o caminho
-          é a performance do mês, não um dia sem gastar.{" "}
-          <InfoPopover term={WHY_CEILING_STOPPED_TERM} hideMarker>
-            <span className="hoje__how">Por que o teto parou de morder?</span>
-          </InfoPopover>
-        </>
-      ) : null}
-      {tetoClause}{" "}
-      <InfoPopover term={cardMode ? VERDICT_HOW_CARD : VERDICT_HOW_DEBIT} hideMarker>
-        <span className="hoje__how">Como funciona?</span>
-      </InfoPopover>
-    </>
-  );
+      );
+  }
 }
 
 /** Bloco do dia: no modo cartão o corpo são as faturas em aberto por vencimento. */
@@ -720,10 +688,13 @@ function BlockDay({
               <NoRecordDash term={TETO_NONE_TERM} label="Sem teto estipulado" />
             </p>
           )}
-          <p className="hoje__gloss">
-            Lance o gasto de hoje para manter o saldo fiel — o registro vive no botão
-            Registrar lançamento.
-          </p>
+          {/* Convite de estado vazio: nos dias já registrados a instrução vira ruído. */}
+          {spentToday === 0 && (
+            <p className="hoje__gloss">
+              Lance o gasto de hoje para manter o saldo fiel — o registro vive no botão
+              Registrar lançamento.
+            </p>
+          )}
         </>
       )}
     </section>
@@ -778,64 +749,70 @@ function InvoiceRow({
   );
 }
 
-/** Insight do mês na voz da Mia — leitura em linguagem natural da corrente de saldo. */
+/**
+ * Insight do mês na voz da Mia: uma observação que muda com o mês, e a conta impressa no
+ * lugar da prosa que narrava os operandos (regra 33 — o recibo SUBSTITUI a descrição da
+ * fórmula). A próxima entrada não entra: ela já é linha de "Próximos movimentos" (regra 41).
+ */
 function MonthInsightNote({
   insight,
   month,
-  today,
+  monthEndLabel,
+  showReceipt,
 }: {
   insight: MonthInsight;
   month: number;
-  today: string;
+  monthEndLabel: string;
+  showReceipt: boolean;
 }) {
   const band = saldoBand(insight.endBalanceCents);
   const minDay = Number(insight.minDate.split("-")[2] ?? 0);
-  const incomeDay = insight.nextIncomeDate
-    ? Number(insight.nextIncomeDate.split("-")[2] ?? 0)
-    : null;
-  const minIsToday = insight.minDate === today;
+  const deficitDays = insight.deficitDaysAhead;
+  const lines: ReceiptLine[] = [
+    {
+      label: insight.minIsOngoing
+        ? "Ponto mais apertado — hoje"
+        : `Ponto mais apertado — dia ${minDay}`,
+      cents: insight.minCents,
+      ...(insight.minCents < 0 ? { tone: "bad" as const } : {}),
+    },
+    {
+      label: "Buraco do futuro",
+      text:
+        deficitDays === 0
+          ? "Nenhum dia no vermelho"
+          : `${deficitDays} ${deficitDays === 1 ? "dia" : "dias"} no vermelho`,
+      ...(deficitDays > 0 ? { tone: "bad" as const } : {}),
+    },
+    // Sem glifo de operação: as linhas acima são leituras da corrente de saldo, não parcelas
+    // de uma soma — um "=" prometeria uma aritmética que o motor não faz aqui.
+    {
+      label: `Saldo previsto em ${monthEndLabel}`,
+      cents: insight.endBalanceCents,
+      result: true,
+      tone: insight.endBalanceCents < 0 ? "bad" : "ok",
+    },
+  ];
   return (
     <aside className="hoje__insight hoje__insight--month" aria-label="Leitura da Mia">
       <span className="hoje__insight-cat" aria-hidden="true">
         <MiaAvatar width={15} height={15} />
       </span>
-      <p>
-        Fechando o dia assim, {(MES[month] ?? "").toLowerCase()} termina em{" "}
-        <b>{band.label}</b> — saldo previsto de{" "}
-        <b>
-          <Money
-            cents={insight.endBalanceCents}
-            size="inherit"
-            sign={insight.endBalanceCents < 0 ? "negative" : "none"}
-          />
-        </b>
-        . O ponto mais apertado do mês é{" "}
-        {insight.minIsOngoing ? <b>hoje</b> : <b>dia {minDay}</b>}:{" "}
-        <b>
-          <Money
-            cents={insight.minCents}
-            size="inherit"
-            sign={insight.minCents < 0 ? "negative" : "none"}
-          />
-        </b>
-        {insight.minIsOngoing && !minIsToday ? <> desde o dia {minDay}</> : null}
-        {incomeDay !== null ? (
-          <>, e a próxima entrada chega dia {incomeDay}</>
-        ) : null}.{" "}
-        {insight.deficitDaysAhead === 0 ? (
-          <>
-            Nenhum dia no vermelho à vista — no método, isso é ficar sem "buraco do
-            futuro".
-          </>
-        ) : (
-          <>
-            {insight.deficitDaysAhead}{" "}
-            {insight.deficitDaysAhead === 1 ? "dia fica" : "dias ficam"} no vermelho — o
-            "buraco do futuro" do método. Antecipar uma entrada ou segurar o variável
-            desfaz o buraco.
-          </>
-        )}
-      </p>
+      <div className="hoje__insight-body">
+        <p>
+          Fechando assim, {(MES[month] ?? "").toLowerCase()} termina em{" "}
+          <b>{band.label}</b> — saldo previsto{" "}
+          <b>
+            <Money
+              cents={insight.endBalanceCents}
+              size="inherit"
+              sign={insight.endBalanceCents < 0 ? "negative" : "none"}
+            />
+          </b>
+          .
+        </p>
+        {showReceipt ? <Receipt lines={lines} /> : <CollapsedReceipt lines={lines} />}
+      </div>
     </aside>
   );
 }
@@ -958,7 +935,12 @@ function SaldoReserva({
                   aria-hidden="true"
                 />
                 <span>
-                  Termômetro {band.label} — {saldoBandPhrase(band.key)}
+                  {/* O termo tocável carrega a régua absoluta do método; a legenda fica
+                      com a fronteira em R$, que é o dado. */}
+                  <InfoPopover term="termometro" hideMarker>
+                    <span className="hoje__how">Termômetro</span>
+                  </InfoPopover>{" "}
+                  {band.label} — {saldoBandPhrase(band.key)}
                 </span>
               </div>
             </>

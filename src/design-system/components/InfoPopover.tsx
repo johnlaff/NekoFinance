@@ -23,6 +23,12 @@ interface InfoPopoverProps {
   children: ReactNode;
   /** Esconde o marcador "i" (quando o trigger já é visualmente distinto). */
   hideMarker?: boolean;
+  /**
+   * Nome acessível do gatilho, quando o texto visível não diz a QUAL bloco ele pertence
+   * ("Como funciona?" repetido numa tela). Rótulo explícito, e não texto só-para-leitor
+   * dentro do botão: a concatenação do nome acessível não garante o espaço entre as partes.
+   */
+  label?: string;
   width?: number;
   className?: string;
 }
@@ -31,6 +37,7 @@ export function InfoPopover({
   term,
   children,
   hideMarker = false,
+  label,
   width = 280,
   className = "",
 }: InfoPopoverProps) {
@@ -131,6 +138,7 @@ export function InfoPopover({
         // quando aberto. NÃO usamos aria-expanded (sugere região colapsável/disclosure, incoerente
         // com tooltip) nem aria-haspopup (promete um popup interativo dialog/menu inexistente).
         aria-describedby={open ? id : undefined}
+        {...(label ? { "aria-label": label } : {})}
         onClick={(e) => {
           e.stopPropagation();
           setOpen(true);

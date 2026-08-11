@@ -27,8 +27,10 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByRole("heading", { name: "Boa tarde." })).toBeVisible();
     await expect(page.getByText(/Pode gastar hoje/)).toBeVisible();
 
-    // Curadoria da assistente assina a ordem dos blocos.
-    await expect(page.getByText(/A Mia separou o que importa hoje/)).toBeVisible();
+    // A didática do veredito mora atrás da pergunta, nomeada para o leitor de tela.
+    await expect(
+      page.getByRole("button", { name: "Como funciona? — veredito de hoje" }),
+    ).toBeVisible();
 
     // Bloco do dia (modo débito do fixture): check-in do teto, sem registro inline.
     await expect(page.getByText("Gasto variável de hoje")).toBeVisible();
@@ -65,10 +67,9 @@ test.describe("Neko Finance shell (mocked Tauri IPC)", () => {
     await expect(page.getByText("Sistema", { exact: true })).toHaveCount(0);
 
     // Default: Hoje is active
-    await expect(page.getByRole("button", { name: "Hoje" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    await expect(
+      page.getByRole("button", { name: "Hoje", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
 
     // Navigate to Lançamentos
     await page.getByRole("button", { name: "Lançamentos", exact: true }).click();
