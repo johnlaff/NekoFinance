@@ -1,0 +1,61 @@
+- banner:
+  - text: Horizonte Para onde o saldo vai
+  - button "Alternar para tema claro"
+  - button "Mais telas"
+- main:
+  - paragraph: /Horizonte · Hoje → \d+\/\d+/
+  - heading "Caminho livre até o fim de julho." [level=1]
+  - paragraph:
+    - text: /O menor saldo à vista é R\$ \d+\.\d+,\d+, em \d+\/\d+ — folga\. Se os meses sem lastro custarem o/
+    - button "gasto típico"
+    - text: /, dezembro fecha em R\$ \d+\.\d+,\d+\. Falta lançar — ou decidir onde vai sobrar\./
+  - text: /Lançado até \d+\/\d+\/\d+/
+  - region "A estrada até dezembro":
+    - heading "A estrada até dezembro" [level=2]
+    - text: Só o lançado
+    - img /Saldo projetado de \d+\/\d+ a \d+\/\d+\. Lançado vai de R\$ \d+\.\d+,\d+ a R\$ \d+\.\d+,\d+\. Menor ponto R\$ \d+\.\d+,\d+ em \d+\/\d+\. Se custar o de sempre, o fim do horizonte é R\$ \d+\.\d+,\d+\./
+    - text: "/Lançado Lançado, sem lastro Se custar o de sempre Se custar o que está lançado: R\\$ \\d+\\.\\d+,\\d+ Se custar o de sempre: R\\$ \\d+\\.\\d+,\\d+/"
+    - button "Gasto típico"
+    - text: "/: R\\$ \\d+\\.\\d+,\\d+\\/mês/"
+    - group: › Ver a estrada em números
+  - region /Os próximos \d+ meses/:
+    - heading /Os próximos \d+ meses/ [level=2]
+    - text: Semáforo do saldo
+    - button /Abrir Jun no Calendário — em curso, previsto com lastro, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Jul no Calendário — previsto com lastro, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Ago no Calendário — sem lastro, conferir, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Set no Calendário — sem lastro, conferir, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Out no Calendário — sem lastro, conferir, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Nov no Calendário — sem lastro, conferir, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - button /Abrir Dez no Calendário — sem lastro, conferir, saldo no fim do mês R\$ \d+\.\d+,\d+/
+    - 'img /Jan de \d+: sem registro/'
+    - 'img /Fev de \d+: sem registro/'
+    - 'img /Mar de \d+: sem registro/'
+    - 'img /Abr de \d+: sem registro/'
+    - 'img /Mai de \d+: sem registro/'
+    - text: Vivido Previsto com lastro Sem lastro · Conferir Sem registro
+    - paragraph:
+      - button /Como funciona\? — os próximos \d+ meses/
+  - region "O que já está marcado":
+    - heading "O que já está marcado" [level=2]
+    - text: /Julho → Dezembro Entra R\$ \d+\.\d+,\d+ Sai −R\$ \d+\.\d+,\d+ \d+ dias com lançamento/
+    - group: /› Julho \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+ 2 Fatura do cartão de crédito Diário −R\$ \d+,\d+ 3 Mensalidade demo Conta fixa −R\$ \d+,\d+ 5 Compromisso fixo demo Conta fixa −R\$ \d+,\d+ 8 Compromisso demo no crédito Parcela 3\/\d+ −R\$ \d+,\d+ \d+ Despesa demo variável Diário −R\$ \d+,\d+ \d+ Despesa fixa demo projetada Conta fixa −R\$ \d+\.\d+,\d+ \d+ Receita demo projetada Entrada R\$ \d+\.\d+,\d+/
+    - group: /› Agosto \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
+    - group: /› Setembro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
+    - group: /› Outubro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
+    - group: /› Novembro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
+    - group: /› Dezembro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
+  - region "E se?":
+    - heading "E se?" [level=2]
+    - text: Cenários
+    - button "Simular cenário"
+    - button "Cenários salvos"
+    - paragraph:
+      - button "Como funciona? — E se?"
+- navigation "Navegação do app":
+  - button "Hoje"
+  - button "Lançamentos"
+  - button "Este mês"
+  - button "Calendário"
+  - button "Mia"
+  - button "Registrar lançamento"

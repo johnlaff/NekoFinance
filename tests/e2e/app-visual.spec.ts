@@ -372,6 +372,37 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+// Horizonte no mobile: a estrada e a grade de meses refluem para coluna única,
+// com o veredito e o card de cenário na ergonomia de polegar.
+for (const theme of ["dark", "light"] as const) {
+  test(`Horizonte — mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    // No mobile "Horizonte" vive no menu "Mais telas" (o dock tem 5 destinos fixos).
+    await page.getByRole("button", { name: "Mais telas" }).click();
+    await page.getByRole("button", { name: "Horizonte", exact: false }).click();
+    await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-horizonte.aria.yml",
+      });
+    }
+    await expect(page).toHaveScreenshot(`mobile-horizonte-${theme}.png`, {
+      fullPage: true,
+    });
+  });
+}
+
 // Lançamentos no mobile: a ergonomia própria do viewport — busca na zona do
 // polegar (rodapé da lista) e filtro por tipo em bottom sheet.
 for (const theme of ["dark", "light"] as const) {
