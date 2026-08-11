@@ -96,19 +96,19 @@ usada ficou em `/tmp` durante o spike e foi removida do aparelho ao final.
 
 ## Toolchain vencedora
 
-| Componente | Versão |
-| --- | --- |
-| Android SDK | `/opt/android-sdk` (platform 36, build-tools, platform-tools) |
-| NDK | 28.2.13676358 |
-| cargo-ndk | 4.1.2 |
-| Rust targets | `aarch64-linux-android` (testado no aparelho), `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` (instalados, não exercidos no aparelho físico) |
-| rustc / cargo | 1.96.0 |
-| AGP (Android Gradle Plugin) | 8.11.0 |
-| Gradle | 8.14.3 |
-| Kotlin | 1.9.25 |
-| compileSdk / targetSdk / minSdk | 36 / 36 / 24 |
-| JDK do daemon Gradle | Temurin 21.0.12+8 — **obrigatório**: Gradle 8.14.3 não roda sob JDK 25 ("Unsupported class file major version 69"); exportar `JAVA_HOME` para um JDK 21 antes de `tauri android build`/`gradlew`. Não fixar em `gradle.properties` — o caminho do JDK é por máquina, não por projeto. |
-| Flags de linker | Apenas os que o próprio `tauri-cli` já define por padrão por alvo (`-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES`); nenhuma flag extra foi necessária |
+| Componente                      | Versão                                                                                                                                                                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android SDK                     | `/opt/android-sdk` (platform 36, build-tools, platform-tools)                                                                                                                                                                                                                         |
+| NDK                             | 28.2.13676358                                                                                                                                                                                                                                                                         |
+| cargo-ndk                       | 4.1.2                                                                                                                                                                                                                                                                                 |
+| Rust targets                    | `aarch64-linux-android` (testado no aparelho), `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` (instalados, não exercidos no aparelho físico)                                                                                                                 |
+| rustc / cargo                   | 1.96.0                                                                                                                                                                                                                                                                                |
+| AGP (Android Gradle Plugin)     | 8.11.0                                                                                                                                                                                                                                                                                |
+| Gradle                          | 8.14.3                                                                                                                                                                                                                                                                                |
+| Kotlin                          | 1.9.25                                                                                                                                                                                                                                                                                |
+| compileSdk / targetSdk / minSdk | 36 / 36 / 24                                                                                                                                                                                                                                                                          |
+| JDK do daemon Gradle            | Temurin 21.0.12+8 — **obrigatório**: Gradle 8.14.3 não roda sob JDK 25 ("Unsupported class file major version 69"); exportar `JAVA_HOME` para um JDK 21 antes de `tauri android build`/`gradlew`. Não fixar em `gradle.properties` — o caminho do JDK é por máquina, não por projeto. |
+| Flags de linker                 | Apenas os que o próprio `tauri-cli` já define por padrão por alvo (`-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES`); nenhuma flag extra foi necessária                                                                                                                  |
 
 Nenhum problema de símbolos de ponto flutuante de 128 bits (o problema conhecido de NDKs antigos
 com sqlx/SQLite, citado na spec) apareceu com esta combinação de NDK/cargo-ndk — `sqlx-sqlite`

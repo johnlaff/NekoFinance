@@ -19,8 +19,8 @@ import { importLocalXlsxCmd, type ImportDiagnostic } from "./sheetsView";
  * inofensiva (planilhas são pequenas).
  */
 async function materializeLocalPath(pickedPath: string): Promise<string> {
-  const bytes = await readFile(pickedPath);
-  const dest = await join(await appCacheDir(), "neko-local-import.xlsx");
+  const [bytes, cacheDir] = await Promise.all([readFile(pickedPath), appCacheDir()]);
+  const dest = await join(cacheDir, "neko-local-import.xlsx");
   await writeFile(dest, bytes);
   return dest;
 }
