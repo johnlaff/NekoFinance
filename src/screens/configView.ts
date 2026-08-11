@@ -1,10 +1,12 @@
 import {
   backupDatabase,
+  driveCheckin,
   getAppInfo,
   getAppSetting,
   getFlagSetting,
   getMiaConsent,
   grantMiaConsent,
+  lastDriveCheckin,
   lastSyncAt,
   registerOsReminder,
   revokeMiaConsent,
@@ -13,10 +15,18 @@ import {
   unregisterOsReminder,
   type AppInfo,
   type AuthStatus,
+  type DriveCheckinInfo,
   type MiaConsentView,
 } from "../lib/api";
+import { syncRecencyLabel } from "../lib/syncRecency";
 
-export type { AppInfo, AuthStatus, MiaConsentView };
+export type { AppInfo, AuthStatus, DriveCheckinInfo, MiaConsentView };
+
+/** Mensagem exata devolvida pelo backend (`oauth::token_store::NEEDS_DRIVE_REAUTH`) quando o
+ *  token não tem o escopo `drive.appdata` — casada por igualdade para levar ao fluxo de
+ *  reconexão, nunca a um erro cru. Precisa ficar em sincronia com a constante Rust. */
+export const NEEDS_DRIVE_REAUTH =
+  "Re-autorize para habilitar o snapshot no Drive: sua conexão atual não tem esse escopo.";
 
 export type GreetTone = "ok" | "warn" | "muted";
 
@@ -82,6 +92,29 @@ export function greetState(
   };
 }
 
+/**
+ * Rótulo do último check-in do snapshot no Drive: recência + por qual aparelho.
+ * "este aparelho" quando o check-in foi deste mesmo device_id; senão, os 8
+ * primeiros caracteres do id do outro aparelho — o suficiente para diferenciar sem expor o UUID
+ * inteiro numa linha de estado.
+ */
+export function driveCheckinLabel(
+  info: DriveCheckinInfo | null | undefined,
+  now?: number,
+): string {
+  if (!info?.last_checkin_at) {
+    return "Nenhum check-in ainda — publique o primeiro snapshot.";
+  }
+  const recency = syncRecencyLabel(info.last_checkin_at, now);
+  const isThisDevice = info.last_checkin_device_id === info.this_device_id;
+  const device = isThisDevice
+    ? "este aparelho"
+    : `outro aparelho (${(info.last_checkin_device_id ?? "").slice(0, 8)})`;
+  return recency
+    ? `Último check-in ${recency}, por ${device}.`
+    : `Publicado por ${device}.`;
+}
+
 // --- Leitura -----------------------------------------------------------------------------
 
 export function fetchAppInfo(): Promise<AppInfo> {
@@ -90,6 +123,10 @@ export function fetchAppInfo(): Promise<AppInfo> {
 
 export function fetchLastSyncAt(): Promise<string | null> {
   return lastSyncAt();
+}
+
+export function fetchLastDriveCheckin(): Promise<DriveCheckinInfo> {
+  return lastDriveCheckin();
 }
 
 export function fetchMiaConsent(): Promise<MiaConsentView> {
@@ -109,6 +146,13 @@ export function fetchConfigSetting(key: string): Promise<string | null> {
 
 export function backupDatabaseCmd(destPath: string): Promise<string> {
   return backupDatabase(destPath);
+}
+
+export function driveCheckinCmd(
+  clientId: string,
+  clientSecret?: string,
+): Promise<DriveCheckinInfo> {
+  return driveCheckin(clientId, clientSecret);
 }
 
 export function grantMiaConsentCmd(): Promise<MiaConsentView> {

@@ -1,0 +1,267 @@
+//! Estado LOCAL do lease: quem este aparelho é e até onde já sincronizou. Linha única — o
+//! contraponto LOCAL do manifest remoto (`snapshot::manifest`), nunca o mesmo dado.
+
+use sqlx::SqlitePool;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotState {
+    pub device_id: String,
+    pub base_sequence: i64,
+    pub last_checkin_at: Option<String>,
+    pub last_checkin_device_id: Option<String>,
+    /// Hash (sha256 hex) do ÚLTIMO snapshot exportado por este aparelho — o jeito honesto de
+    /// saber se um novo check-in tem algo de fato novo, sem hooks em todo gesto que muda o banco.
+    pub last_export_sha256: Option<String>,
+}
+
+/// Garante que a linha singleton existe, gerando `device_id` (UUID v4) na primeira leitura DESTE
+/// aparelho. Idempotente: chamadas seguintes só leem a linha já criada — nunca reemitem o id.
+pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
+    if let Some(row) =
+        sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, Option<String>)>(
+            "SELECT device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
+         last_export_sha256 FROM snapshot_state WHERE id = 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("ler snapshot_state: {e}"))?
+    {
+        return Ok(SnapshotState {
+            device_id: row.0,
+            base_sequence: row.1,
+            last_checkin_at: row.2,
+            last_checkin_device_id: row.3,
+            last_export_sha256: row.4,
+        });
+    }
+
+    let device_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO snapshot_state (id, device_id, base_sequence) VALUES (1, ?1, 0)")
+        .bind(&device_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("inicializar snapshot_state: {e}"))?;
+
+    Ok(SnapshotState {
+        device_id,
+        base_sequence: 0,
+        last_checkin_at: None,
+        last_checkin_device_id: None,
+        last_export_sha256: None,
+    })
+}
+
+/// Grava o resultado de um check-in bem-sucedido: a NOVA sequência-base (o que acabamos de
+/// publicar, já confirmada no manifest remoto), quando/por qual aparelho, e o hash do export
+/// publicado (para o PRÓXIMO check-in saber se algo mudou de verdade).
+pub async fn record_checkin(
+    pool: &SqlitePool,
+    new_base_sequence: i64,
+    checked_in_at: &str,
+    device_id: &str,
+    export_sha256: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE snapshot_state \
+         SET base_sequence = ?1, last_checkin_at = ?2, last_checkin_device_id = ?3, \
+         last_export_sha256 = ?4 \
+         WHERE id = 1",
+    )
+    .bind(new_base_sequence)
+    .bind(checked_in_at)
+    .bind(device_id)
+    .bind(export_sha256)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("gravar check-in: {e}"))?;
+    Ok(())
+}
+
+/// Apaga a linha do `snapshot_state` de uma CÓPIA já exportada (nunca do banco ativo) antes de a
+/// cópia virar o snapshot publicado no Drive. Duas razões, uma decisão: `device_id`/`base_sequence`
+/// são identidade e progresso DESTE aparelho — se viajassem no snapshot, um restore futuro
+/// sobrescreveria a identidade de quem restaura com a de quem publicou; e como esta é a única
+/// linha que muda a cada check-in bem-sucedido, deixá-la dentro faria o hash do export nunca se
+/// repetir, e "em dia" (nenhuma mudança de domínio) nunca seria alcançável na prática.
+///
+/// O `VACUUM` depois do `DELETE` não é cosmético: sem ele, o layout físico de página da cópia
+/// ainda carrega o tamanho que a linha tinha no banco ATIVO (um hash de 64 caracteres ocupa mais
+/// espaço que a linha recém-criada com `base_sequence=0`), e dois exports do mesmo conteúdo
+/// lógico sairiam com bytes diferentes — o hash nunca bateria, e "em dia" nunca seria alcançado.
+pub(crate) async fn strip_from_export_copy(db_path: &std::path::Path) -> Result<(), String> {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
+        .map_err(|e| format!("abrir cópia exportada: {e}"))?;
+    let copy_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .map_err(|e| format!("conectar à cópia exportada: {e}"))?;
+    let result: Result<(), String> = async {
+        sqlx::query("DELETE FROM snapshot_state")
+            .execute(&copy_pool)
+            .await
+            .map_err(|e| format!("limpar estado local da cópia exportada: {e}"))?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe("VACUUM".to_string()))
+            .execute(&copy_pool)
+            .await
+            .map_err(|e| format!("normalizar layout da cópia exportada: {e}"))?;
+        Ok(())
+    }
+    .await;
+    copy_pool.close().await;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::time::Duration;
+
+    /// Pool de UMA conexão — o MESMO perfil de produção (`lib.rs`). Um pool default (múltiplas
+    /// conexões) nunca pegaria a classe de regressão de deadlock testada abaixo: com mais de uma
+    /// conexão livre, a leitura simplesmente usaria outra e o bug ficaria invisível no teste.
+    async fn single_connection_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("pool SQLite em memória");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrações");
+        pool
+    }
+
+    #[tokio::test]
+    async fn load_or_init_creates_the_singleton_row_once_and_is_idempotent() {
+        let pool = single_connection_pool().await;
+
+        let first = load_or_init(&pool).await.expect("primeira leitura");
+        assert_eq!(first.base_sequence, 0);
+        assert!(first.last_checkin_at.is_none());
+        assert!(!first.device_id.is_empty());
+
+        let second = load_or_init(&pool).await.expect("segunda leitura");
+        assert_eq!(
+            second.device_id, first.device_id,
+            "device_id não pode trocar entre leituras"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_checkin_updates_base_sequence_who_when_and_export_hash() {
+        let pool = single_connection_pool().await;
+        let initial = load_or_init(&pool).await.expect("init");
+        assert!(initial.last_export_sha256.is_none());
+
+        record_checkin(
+            &pool,
+            3,
+            "2026-08-11 12:00:00",
+            &initial.device_id,
+            "deadbeef",
+        )
+        .await
+        .expect("record_checkin");
+
+        let after = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(after.base_sequence, 3);
+        assert_eq!(
+            after.last_checkin_at.as_deref(),
+            Some("2026-08-11 12:00:00")
+        );
+        assert_eq!(
+            after.last_checkin_device_id.as_deref(),
+            Some(initial.device_id.as_str())
+        );
+        assert_eq!(after.last_export_sha256.as_deref(), Some("deadbeef"));
+    }
+
+    #[tokio::test]
+    async fn strip_from_export_copy_empties_the_table_without_touching_the_live_db() {
+        use std::str::FromStr;
+        let dir = std::env::temp_dir().join(format!("neko-strip-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("copy.db");
+
+        // Exporta uma cópia de um pool com a linha singleton já criada (device_id real).
+        let src_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::from_str(&format!(
+                    "sqlite:{}",
+                    dir.join("src.db").display()
+                ))
+                .unwrap()
+                .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&src_pool).await.unwrap();
+        load_or_init(&src_pool)
+            .await
+            .expect("cria a linha singleton");
+        crate::commands::db_export::vacuum_into_atomic(&src_pool, &db_path)
+            .await
+            .expect("exportar cópia");
+
+        strip_from_export_copy(&db_path)
+            .await
+            .expect("limpar a cópia");
+
+        let copy_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snapshot_state")
+            .fetch_one(&copy_pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a CÓPIA deve ficar sem a linha de estado local");
+
+        // O banco ATIVO continua com a linha intacta — só a cópia foi limpa.
+        let live_state = load_or_init(&src_pool)
+            .await
+            .expect("releitura do banco ativo");
+        assert!(!live_state.device_id.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn load_or_init_queues_behind_an_open_write_transaction_instead_of_deadlocking() {
+        // Reproduz a classe de deadlock já documentada no repositório: com pool de 1 conexão,
+        // ler enquanto uma escrita mantém uma transação aberta precisa ENFILEIRAR (e completar
+        // assim que a tx solta a conexão) — nunca travar para sempre.
+        let pool = single_connection_pool().await;
+        load_or_init(&pool)
+            .await
+            .expect("garante a linha singleton antes do teste");
+
+        let mut tx = pool.begin().await.expect("abrir transação de escrita");
+        sqlx::query("UPDATE snapshot_state SET base_sequence = base_sequence WHERE id = 1")
+            .execute(&mut *tx)
+            .await
+            .expect("escrita dentro da transação");
+
+        let pool_for_read = pool.clone();
+        let read = tokio::spawn(async move { load_or_init(&pool_for_read).await });
+
+        // Dá tempo da leitura tentar adquirir a conexão (e ficar na fila do pool) ANTES de soltar
+        // a transação — sem essa espera o teste não exercitaria a contenção de verdade.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.commit().await.expect("commit da transação");
+
+        let result = tokio::time::timeout(Duration::from_secs(5), read)
+            .await
+            .expect("a leitura NÃO pode travar para sempre esperando a única conexão")
+            .expect("a task de leitura não deve entrar em panic");
+        assert!(result.is_ok());
+    }
+}

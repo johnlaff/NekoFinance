@@ -38,7 +38,7 @@ import {
 } from "../lib/motion";
 import { playThemeReveal, readMotionLog } from "../shell/themeReveal";
 import { useThemeSwitch } from "../shell/ThemeToggle";
-import { safeErrorMessage } from "../lib/errors";
+import { errorText, safeErrorMessage } from "../lib/errors";
 import { syncRecencyLabel } from "../lib/syncRecency";
 import { invalidateCommands, useCommand } from "../lib/useCommand";
 import { Button } from "../design-system/components/Button";
@@ -49,13 +49,17 @@ import { Switch } from "../design-system/components/Switch";
 import { fetchDailyBudget } from "./tetoView";
 import {
   backupDatabaseCmd,
+  driveCheckinCmd,
+  driveCheckinLabel,
   fetchAppInfo,
   fetchConfigSetting,
+  fetchLastDriveCheckin,
   fetchLastSyncAt,
   fetchMiaConsent,
   fetchShowReceiptFlag,
   grantMiaConsentCmd,
   greetState,
+  NEEDS_DRIVE_REAUTH,
   registerOsReminderCmd,
   revokeMiaConsentCmd,
   setConfigSetting,
@@ -830,6 +834,71 @@ function BackupLine() {
 }
 
 // ---------------------------------------------------------------------------
+// Conexão — check-in do snapshot no Drive
+// ---------------------------------------------------------------------------
+
+function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
+  const { data: info } = useCommand("last_drive_checkin", fetchLastDriveCheckin);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [needsReauth, setNeedsReauth] = useState(false);
+
+  async function doCheckin() {
+    if (!GOOGLE_CLIENT_ID) return;
+    setErr(null);
+    setNeedsReauth(false);
+    setBusy(true);
+    try {
+      await driveCheckinCmd(GOOGLE_CLIENT_ID);
+      setBusy(false);
+      invalidateCommands();
+    } catch (e) {
+      setBusy(false);
+      // Escopo `drive.appdata` faltando: leva ao fluxo de reconexão, nunca a um erro cru.
+      if (errorText(e) === NEEDS_DRIVE_REAUTH) {
+        setNeedsReauth(true);
+      } else {
+        setErr(safeErrorMessage(e, "Não foi possível fazer o check-in."));
+      }
+    }
+  }
+
+  return (
+    <Line
+      title="Snapshot no Drive"
+      sub={
+        <>
+          {needsReauth
+            ? "Reautorize o escopo do Drive para publicar o snapshot."
+            : driveCheckinLabel(info)}{" "}
+          {err ? (
+            <strong role="alert" className="config__err">
+              {err}
+            </strong>
+          ) : null}
+        </>
+      }
+      right={
+        needsReauth ? (
+          <Button size="sm" variant="ghost" onClick={onNeedsReauth}>
+            Reconectar
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void doCheckin()}
+            disabled={busy || !isTauri || !GOOGLE_CLIENT_ID}
+          >
+            {busy ? "Publicando…" : "Fazer check-in"}
+          </Button>
+        )
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Atualizações — mesma máquina de estados do convite calmo (updaterView)
 // ---------------------------------------------------------------------------
 
@@ -974,6 +1043,7 @@ export function SettingsScreen({
           sub="Nenhuma mudança na planilha sem seu OK."
           right={<span className="config__pill">Sempre</span>}
         />
+        <DriveCheckinLine onNeedsReauth={handleReconnect} />
         <div className="config__panel">
           <ConflictGate onResolved={writeBack.refresh} />
           <WriteBackPending writeBack={writeBack} />

@@ -155,6 +155,20 @@ _Avoid_: Import config, column mapping
 **Sync Log**:
 Append-only table for sync events. Records what was imported/modified, when, and by which profile. Enables conflict resolution in future multi-device scenarios.
 
+**Snapshot** (`snapshot::transport`):
+The whole local SQLite database, exported atomically (`VACUUM INTO`, the same path as the manual backup) and published as a single file to the app's `appDataFolder` on Drive — invisible to the owner, scoped by `drive.appdata` (no access to the owner's own Drive files). One aparelho (device) at a time owns the write; convergence is device-single-writer, not row-level merge (ADR-0015).
+_Avoid_: Backup (that term stays for the user-facing manual export), sync file
+
+**Manifest** (`snapshot::manifest::SnapshotManifest`):
+Published beside the Snapshot: `device_id`, a monotonic `sequence`, `created_at`, `app_version`, `schema_version`. `sequence` decides possession; the versions decide restore compatibility (a snapshot from a newer schema than the local app refuses restore).
+
+**Lease / veredito** (`snapshot::lease::decide`):
+The pure arbiter comparing local sequence, base sequence (this device's last synced point) and the remote Manifest into a closed verdict — `UpToDate`, `Pull`, `Push`, `Conflict`. Force-with-lease semantics: `Push` is refused whenever the remote advanced past the local base, the same guarantee as `git push --force-with-lease`. Shell and UI only obey the verdict, never re-derive it.
+
+**Check-in**:
+The gesture that exports a Snapshot and publishes it — the material change this arbiter's first slice (issue #423) recognizes. Automatic triggers (on close, on material gesture) and the mirrored check-out (pull on open) are later slices of the same spec.
+_Avoid_: sync (too generic — this app already has a different "sync" for the spreadsheet import)
+
 **Zero semantics at import**:
 Two spreadsheet zeros are resolved at import so they never masquerade as data: **pre-history** (template-evaluated zero balances in months before the sheet's adoption — before its first transaction or first non-zero balance — are trimmed from the Saldo series; those months honestly have no record) and **placeholders** (`R$ 0,00` note items on projected rows persist as zero-amount `line_item`s — the pre-launched structure of the future stays visible without inventing value; realized rows still discard zeros as noise).
 

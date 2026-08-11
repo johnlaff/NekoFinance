@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { greetState } from "./configView";
+import { driveCheckinLabel, greetState } from "./configView";
 
 describe("greetState — pílula de estado do veredito", () => {
   it("verificando conexão", () => {
@@ -88,5 +88,42 @@ describe("greetState — pílula de estado do veredito", () => {
       headline: "Conectado",
       detail: null,
     });
+  });
+});
+
+describe("driveCheckinLabel — recência + aparelho do último check-in do snapshot", () => {
+  const now = new Date("2026-08-11T15:00:00Z").getTime();
+
+  it("nenhum check-in ainda", () => {
+    expect(driveCheckinLabel(null, now)).toBe(
+      "Nenhum check-in ainda — publique o primeiro snapshot.",
+    );
+    expect(driveCheckinLabel(undefined, now)).toBe(
+      "Nenhum check-in ainda — publique o primeiro snapshot.",
+    );
+  });
+
+  it("check-in feito por este aparelho", () => {
+    const label = driveCheckinLabel(
+      {
+        last_checkin_at: "2026-08-11 14:55:00",
+        last_checkin_device_id: "device-a",
+        this_device_id: "device-a",
+      },
+      now,
+    );
+    expect(label).toBe("Último check-in há 5 min, por este aparelho.");
+  });
+
+  it("check-in feito por OUTRO aparelho (identifica pelo id curto)", () => {
+    const label = driveCheckinLabel(
+      {
+        last_checkin_at: "2026-08-11 13:00:00",
+        last_checkin_device_id: "device-bbbbbbbb-cccc",
+        this_device_id: "device-a",
+      },
+      now,
+    );
+    expect(label).toBe("Último check-in há 2 h, por outro aparelho (device-b).");
   });
 });

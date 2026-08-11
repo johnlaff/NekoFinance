@@ -23,6 +23,7 @@ mod recurrence;
 mod reminder_task;
 mod scenarios;
 mod secret_file;
+mod snapshot;
 mod splits;
 mod sync_task;
 mod tags;
@@ -99,6 +100,8 @@ pub fn run() {
             commands::get_sheet_mappings,
             commands::list_user_spreadsheets,
             commands::last_sync_at,
+            commands::drive_checkin,
+            commands::last_drive_checkin,
             tags::create_tag_cmd,
             tags::list_tags_cmd,
             tags::set_transaction_tags_cmd,

@@ -587,7 +587,7 @@ pub(crate) async fn backup_db(
     active_db: &std::path::Path,
     dest_path: &str,
 ) -> Result<String, String> {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     let dest = dest_path.trim();
     if dest.is_empty() {
         return Err("escolha um destino para o backup".into());
@@ -634,22 +634,11 @@ pub(crate) async fn backup_db(
         return Err("escolha um destino diferente do banco em uso.".into());
     }
 
-    // Grava num TEMP no MESMO diretório do destino e só então faz `rename` (atômico no mesmo
-    // filesystem): o backup ANTERIOR só é substituído quando o novo está completo. Se o VACUUM
-    // falhar, o destino antigo permanece intacto. (`VACUUM INTO` recusa arquivo já existente, daí o
-    // temp único; e roda como SQL BRUTO via `raw_sql` — um prepared statement o silenciaria.)
-    let parent = dest_buf.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = parent.join(format!(".neko-backup-{}.tmp", uuid::Uuid::new_v4()));
-    let tmp_sql = tmp.to_string_lossy().replace('\'', "''");
-    let stmt = format!("VACUUM INTO '{tmp_sql}'");
-    if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(stmt)).execute(pool).await {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("backup: {e}"));
-    }
-    std::fs::rename(&tmp, &dest_buf).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("finalizar backup: {e}")
-    })?;
+    // Escrita-em-temporário + rename atômico, compartilhado com o check-in do snapshot no Drive
+    // — os dois precisam do mesmo cuidado (ver `db_export::vacuum_into_atomic`).
+    db_export::vacuum_into_atomic(pool, &dest_buf)
+        .await
+        .map_err(|e| format!("backup: {e}"))?;
     Ok(dest.to_string())
 }
 
