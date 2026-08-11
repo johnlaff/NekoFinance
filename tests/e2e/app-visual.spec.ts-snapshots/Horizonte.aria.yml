@@ -28,7 +28,8 @@
     - text: Só o lançado
     - img /Saldo projetado de \d+\/\d+ a \d+\/\d+\. Lançado vai de R\$ \d+\.\d+,\d+ a R\$ \d+\.\d+,\d+\. Menor ponto R\$ \d+\.\d+,\d+ em \d+\/\d+\. Se custar o de sempre, o fim do horizonte é R\$ \d+\.\d+,\d+\./
     - text: "/Lançado Lançado, sem lastro Se custar o de sempre Se custar o que está lançado: R\\$ \\d+\\.\\d+,\\d+ Se custar o de sempre: R\\$ \\d+\\.\\d+,\\d+/"
-    - paragraph: /Um mês à frente só sustenta o veredito quando a saída lançada cobre ao menos \d+% do gasto típico — R\$ \d+\.\d+,\d+, a mediana dos seus meses vividos\. A régua do ano \(Economizado%\) mora em O ano — aqui o juiz é o caixa\./
+    - button "Gasto típico"
+    - text: "/: R\\$ \\d+\\.\\d+,\\d+\\/mês/"
     - group: › Ver a estrada em números
   - region /Os próximos \d+ meses/:
     - heading /Os próximos \d+ meses/ [level=2]
@@ -47,9 +48,7 @@
     - 'img /Mai de \d+: sem registro/'
     - text: Vivido Previsto com lastro Sem lastro · Conferir Sem registro
     - paragraph:
-      - text: A cor de cada mês é o
-      - button "semáforo"
-      - text: "do saldo — as faixas fixas da sua planilha. Mês sem lastro não ganha cor de aprovação: fica em compasso de conferir. Cada mês abre no Calendário."
+      - button /Como funciona\? — os próximos \d+ meses/
   - region "O que já está marcado":
     - heading "O que já está marcado" [level=2]
     - text: /Julho → Dezembro Entra R\$ \d+\.\d+,\d+ Sai −R\$ \d+\.\d+,\d+ \d+ dias com lançamento/
@@ -62,6 +61,7 @@
   - region "E se?":
     - heading "E se?" [level=2]
     - text: Cenários
-    - paragraph: "/Teste uma compra, um financiamento ou uma troca de plano antes de assumir: o cenário entra como camada na estrada e o método responde com as duas réguas — a reserva continua com 6 meses ou mais\\? A economia de \\d+–\\d+% segue viva\\?/"
     - button "Simular cenário"
     - button "Cenários salvos"
+    - paragraph:
+      - button "Como funciona? — E se?"

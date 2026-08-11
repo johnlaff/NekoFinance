@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { HorizonteScreen } from "./HorizonteScreen";
 import { mockCommands, mockInvoke } from "../test/commands";
@@ -156,6 +157,71 @@ describe("HorizonteScreen (render)", () => {
     );
   });
 
+  // Regra 1 (ADR-0013): a regra dos 60% de lastro é prosa fixa, idêntica em toda visita —
+  // já vive integralmente no popover de "gasto típico"; o parágrafo inline morre. A
+  // fronteira de réguas (que morava no mesmo parágrafo) recolhe para o popover do semáforo.
+  // O operando (o valor do gasto típico) é dado que varia por usuário — numa frase mista,
+  // a cláusula didática recolhe e o operando sobrevive como legenda curta (regra 3).
+  it("a regra dos 60% de lastro não aparece mais em parágrafo fixo, mas o operando fica", async () => {
+    mockLivre();
+    render(<HorizonteScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("A estrada até dezembro")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/Um mês à frente só sustenta o veredito/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/A régua do ano \(Economizado%\) mora em O ano/),
+    ).not.toBeInTheDocument();
+    const typicalTrigger = screen.getByRole("button", { name: "Gasto típico" });
+    expect(typicalTrigger.parentElement?.parentElement).toHaveTextContent(
+      /Gasto típico.*R\$ 11\.121,26\/mês/,
+    );
+  });
+
+  // A fronteira entre as réguas (ano × caixa) recolhe para o popover do semáforo — a grade
+  // ganha um gatilho "Como funciona?" próprio, e o texto duplicado do bloco some da superfície.
+  it("a grade recolhe o semáforo atrás de 'Como funciona?' com a fronteira de réguas dentro", async () => {
+    const user = userEvent.setup();
+    mockLivre();
+    render(<HorizonteScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Os próximos 12 meses")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Cada mês abre no Calendário/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Mês sem lastro não ganha cor de aprovação/),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Como funciona? — os próximos 12 meses" }),
+    );
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(/faixas fixas da sua planilha/);
+    expect(tooltip).toHaveTextContent(
+      /A régua do ano \(Economizado%\) mora em O ano — aqui o juiz é o caixa/,
+    );
+  });
+
+  // A didática do bloco de cenários recolhe atrás de "Como funciona?"; o CTA de simular
+  // continua sempre visível (regra 3) em qualquer estado da tela.
+  it("cenários: a didática recolhe atrás de 'Como funciona?' e o CTA de simular fica visível", async () => {
+    const user = userEvent.setup();
+    mockLivre();
+    render(<HorizonteScreen />);
+    await waitFor(() => expect(screen.getByText("E se?")).toBeInTheDocument());
+    expect(
+      screen.queryByText(/Teste uma compra, um financiamento ou uma troca de plano/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Simular cenário/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Como funciona? — E se?" }));
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(/a reserva continua com 6 meses ou mais/);
+    expect(tooltip).toHaveTextContent(/A economia de 20–30% segue viva/);
+  });
+
   it("desenha a estrada com rótulo acessível", async () => {
     mockLivre();
     render(<HorizonteScreen />);
@@ -177,7 +243,7 @@ describe("HorizonteScreen (render)", () => {
     expect(screen.getByText("11/36")).toBeInTheDocument();
   });
 
-  it("aperto: manchete do buraco quando o lançado cruza o zero", async () => {
+  it("aperto: a manchete constata o mês e o valor que falta, e devolve a pergunta", async () => {
     mockInvoke.mockReset();
     mockCommands({
       get_forecast: {
@@ -189,9 +255,35 @@ describe("HorizonteScreen (render)", () => {
       get_recent_transactions: () => [],
     });
     render(<HorizonteScreen />);
-    await waitFor(() =>
-      expect(screen.getByText(/O caminho aperta em setembro/)).toBeInTheDocument(),
+    expect(await screen.findByText(/O caminho aperta em setembro/)).toHaveTextContent(
+      "O caminho aperta em setembro — faltam R$ 1.240,00. O que dá para mover antes?",
     );
+    // A receita fixa de travessia (antecipar/adiar/cruzar com a reserva) morre da manchete —
+    // já vive integralmente no popover do "buraco do futuro", termo do glossário do método.
+    expect(
+      screen.queryByText(/Do jeito que está lançado, o saldo passa por/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("aperto: a receita de travessia continua acessível atrás de 'Como funciona?'", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockReset();
+    mockCommands({
+      get_forecast: {
+        ...FORECAST,
+        deepest_deficit: { date: "2026-09-12", balance_cents: -124000 },
+      },
+      last_sync_at: null,
+      scenario_forecast: null,
+      get_recent_transactions: () => [],
+    });
+    render(<HorizonteScreen />);
+    await user.click(
+      await screen.findByRole("button", { name: "Como funciona? — o caminho aperta" }),
+    );
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(/antecipar uma entrada/);
+    expect(tooltip).toHaveTextContent(/cruzar com a reserva/);
   });
 
   it("estado de erro oferece tentar novamente", async () => {
