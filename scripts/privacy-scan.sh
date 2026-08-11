@@ -46,6 +46,19 @@ if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
 fi
 commit_msgs="$(git log ${commit_range} --format='%B' 2>/dev/null || true)"
 
+# Diretórios privados ficam fora do scan de conteúdo porque são locais por contrato
+# (gitignored, nunca versionados). O contrato em si é verificado aqui: se o git estiver
+# rastreando qualquer arquivo deles — um `git add -f` deliberado ou um gitignore quebrado —
+# o gate falha, porque a isenção de conteúdo só é segura enquanto o diretório for
+# genuinamente local.
+private_dirs=(Docs .methodology-pack .neko-data .lancedb .rag-cache .playwright-mcp)
+tracked_private="$(git ls-files -- "${private_dirs[@]}")"
+if [[ -n "$tracked_private" ]]; then
+  printf 'Private local directory has git-tracked files (must never be versioned):\n%s\n' \
+    "$tracked_private" >&2
+  exit 1
+fi
+
 scan_tree_for_pattern() {
   local pattern="$1"
   local entry="$2"
@@ -62,6 +75,8 @@ scan_tree_for_pattern() {
       --glob '!SESSION-CONTEXT.md' \
       --glob '!.methodology-pack/**' \
       --glob '!.claude/skills/neko-fontes-brutas/**' \
+      --glob '!Docs/**' \
+      --glob '!.playwright-mcp/**' \
       -- "$pattern" . || true
   )
 
