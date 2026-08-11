@@ -151,6 +151,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- "Como funciona?" — didática atrás de pergunta (padrão do método) ---- */
+
+.hz__how {
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
 /* ---- A estrada (gráfico próprio de três linhas) ---- */
 
 .hz__road {
@@ -677,23 +686,11 @@ td.hz__num.hz__neg,
 
 /* ---- E se? ---- */
 
-.hz__esebody {
-  margin: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.55;
-  color: var(--text-muted);
-}
-
-.hz__esebody b {
-  color: var(--text-strong);
-  font-weight: 500;
-}
-
 .hz__eseacts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
-  margin-top: var(--space-5);
+  margin-top: var(--space-2);
 }
 
 /* ---- Coreografia: a estrada se desenha; a grade assenta em onda; dinheiro entra pronto ---- */

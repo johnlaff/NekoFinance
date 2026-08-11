@@ -41,7 +41,12 @@ const TYPICAL_TERM = {
 
 const SEMAPHORE_TERM = {
   title: "O semáforo do saldo",
-  body: "A cor de cada mês é a faixa do seu saldo no fim dele — as faixas fixas da sua planilha (folga, ok, apertado, negativo, crítico). Um mês sem lastro não ganha cor de aprovação: fica tracejado, em compasso de conferir. A verdade dia a dia mora no Calendário, que cada mês abre.",
+  body: "A cor de cada mês é a faixa do seu saldo no fim dele — as faixas fixas da sua planilha (folga, ok, apertado, negativo, crítico). Um mês sem lastro não ganha cor de aprovação: fica tracejado, em compasso de conferir. A verdade dia a dia mora no Calendário, que cada mês abre. A régua do ano (Economizado%) mora em O ano — aqui o juiz é o caixa.",
+};
+
+const SCENARIO_TERM = {
+  title: "Como funciona o cenário",
+  body: "Teste uma compra, um financiamento ou uma troca de plano antes de assumir: o cenário entra como camada na estrada e o método responde com as duas réguas — a reserva continua com 6 meses ou mais? A economia de 20–30% segue viva?",
 };
 
 export function HorizonteScreen({
@@ -170,17 +175,6 @@ export function HorizonteScreen({
             </span>
           </div>
           <RoadEnds view={view} />
-          <p className="hz__secnote">
-            Um mês à frente só sustenta o veredito quando a saída lançada cobre ao menos{" "}
-            <b>60%</b> do gasto típico —{" "}
-            <b>
-              <Money cents={view.baselineOutflowCents} size="inherit" />
-            </b>
-            , a mediana dos seus meses vividos.{" "}
-            <span className="hz__cf">
-              A régua do ano (Economizado%) mora em O ano — aqui o juiz é o caixa.
-            </span>
-          </p>
           <NumbersFold view={view} />
         </section>
       ) : null}
@@ -226,11 +220,13 @@ export function HorizonteScreen({
               </span>
             </div>
             <p className="hz__secnote">
-              A cor de cada mês é o{" "}
-              <InfoPopover term={SEMAPHORE_TERM}>semáforo</InfoPopover> do saldo — as
-              faixas fixas da sua planilha. Mês sem lastro não ganha cor de aprovação:
-              fica em compasso de conferir.{" "}
-              <span className="hz__cf">Cada mês abre no Calendário.</span>
+              <InfoPopover
+                term={SEMAPHORE_TERM}
+                label="Como funciona? — os próximos 12 meses"
+                hideMarker
+              >
+                <span className="hz__how">Como funciona?</span>
+              </InfoPopover>
             </p>
           </section>
         ) : null}
@@ -284,18 +280,17 @@ export function HorizonteScreen({
             <h2 id="hz-ese">E se?</h2>
             <span className="hz__note">Cenários</span>
           </div>
-          <p className="hz__esebody">
-            Teste uma compra, um financiamento ou uma troca de plano <b>antes</b> de
-            assumir: o cenário entra como camada na estrada e o método responde com as
-            duas réguas — a reserva continua com <b>6 meses ou mais</b>? A economia de{" "}
-            <b>20–30%</b> segue viva?
-          </p>
           <div className="hz__eseacts">
             <SimulateScenarioButton onClick={() => setSheetOpen(true)} />
             <Button variant="ghost" size="sm" onClick={() => setSheetOpen(true)}>
               Cenários salvos
             </Button>
           </div>
+          <p className="hz__secnote">
+            <InfoPopover term={SCENARIO_TERM} label="Como funciona? — E se?" hideMarker>
+              <span className="hz__how">Como funciona?</span>
+            </InfoPopover>
+          </p>
         </section>
       </div>
 
@@ -347,7 +342,13 @@ function Verdict({
     return (
       <VerdictHero
         label={label}
-        headline={`O caminho aperta em ${view.deficitMonthLabel}.`}
+        headline={
+          <>
+            O caminho aperta em {view.deficitMonthLabel} — faltam{" "}
+            <Money cents={-view.deficit.cents} size="inherit" />. O que dá para mover
+            antes?
+          </>
+        }
         actions={
           <>
             <Button variant="primary" size="sm" onClick={onSimulate}>
@@ -361,14 +362,13 @@ function Verdict({
         footer={<Provenance view={view} />}
       >
         <p>
-          Do jeito que está lançado, o saldo passa por{" "}
-          <b className="hz__neg">
-            <Money cents={view.deficit.cents} size="inherit" />
-          </b>{" "}
-          em {fmtDayMonth(view.deficit.dateISO)}. É um{" "}
-          <InfoPopover term="buraco_do_futuro">buraco</InfoPopover> na estrada — dá para
-          atravessar: <b>antecipar</b> uma entrada, <b>adiar</b> uma saída que caiba, ou
-          cruzar com a <b>reserva</b>, por partes, repondo depois.
+          <InfoPopover
+            term="buraco_do_futuro"
+            label="Como funciona? — o caminho aperta"
+            hideMarker
+          >
+            <span className="hz__how">Como funciona?</span>
+          </InfoPopover>
         </p>
       </VerdictHero>
     );
@@ -594,6 +594,15 @@ function RoadEnds({ view }: { view: HorizonteView }) {
               }}
             />
           ) : null}
+        </span>
+      ) : null}
+      {view.baselineOutflowCents > 0 ? (
+        <span>
+          <InfoPopover term={TYPICAL_TERM}>Gasto típico</InfoPopover>:{" "}
+          <b>
+            <Money cents={view.baselineOutflowCents} size="inherit" />
+          </b>
+          /mês
         </span>
       ) : null}
     </div>
