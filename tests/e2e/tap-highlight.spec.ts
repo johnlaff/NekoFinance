@@ -10,8 +10,10 @@ test("a raiz do app neutraliza o realce de toque nativo", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  const tapHighlight = await page.evaluate(
-    () => getComputedStyle(document.documentElement).webkitTapHighlightColor,
+  const tapHighlight = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue(
+      "-webkit-tap-highlight-color",
+    ),
   );
   expect(tapHighlight).toBe("rgba(0, 0, 0, 0)");
 });
