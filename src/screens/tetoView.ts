@@ -68,6 +68,12 @@ export interface TetoView {
   proposal: CeilingProposal | null;
   /** Operandos da estimativa, para a tela imprimir a conta. Só existe no estado `estimate`. */
   estimateBasis: { variableCents: number; days: number; month: string } | null;
+  /**
+   * O operando do dia para o card "Como o dia lê o teto": quanto o velocímetro já mede,
+   * seguindo o mesmo `mode` (Diário lançado no débito, fatura no cartão). `null` só
+   * enquanto o resumo do dia ainda não chegou — nunca um zero fabricado.
+   */
+  spentTodayCents: number | null;
 }
 
 /** Cadência do método: a cerimônia se refaz de três em três meses. */
@@ -260,6 +266,11 @@ function proofFrom(budget: DailyBudget): TetoProof | null {
 export function buildTetoView(input: TetoInput): TetoView {
   const { budget, proposal, summary, today } = input;
   const mode = summary?.spending_mode ?? "debit";
+  const spentTodayCents = summary
+    ? mode === "card"
+      ? summary.card_spend_today_cents
+      : summary.daily_spend_today
+    : null;
 
   if (!budget) {
     return {
@@ -274,6 +285,7 @@ export function buildTetoView(input: TetoInput): TetoView {
       proofMatchesVerdict: true,
       proposal: null,
       estimateBasis: null,
+      spentTodayCents,
     };
   }
 
@@ -293,6 +305,7 @@ export function buildTetoView(input: TetoInput): TetoView {
     proposal: proposal ?? null,
     // Só o estado `estimate` tem conta a mostrar; os outros sobrescrevem quando têm.
     estimateBasis: null,
+    spentTodayCents,
   };
 
   // A proposta é uma decisão esperando o dono — ela toma a manchete mesmo com teto vigente, que

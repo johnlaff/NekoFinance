@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TetoScreen } from "./TetoScreen";
@@ -102,6 +102,73 @@ describe("TetoScreen", () => {
       screen.queryByText(/O velocímetro do dia mede o Diário lançado/),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/responde por outra régua/)).not.toBeInTheDocument();
+  });
+
+  // A ponte entre as duas réguas era 100% fixa ("O velocímetro do dia está medindo o
+  // Diário lançado contra este teto."). Ela ganha o operando do dia e vira observação —
+  // os dois termos (velocímetro, Diário) seguem tocáveis como gatilhos do popover.
+  it("como o dia lê o teto, no débito: a observação ganha o Diário lançado hoje", async () => {
+    mockCommands({
+      get_daily_budget_cmd: CEREMONY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "debit",
+        daily_spend_today: 3_800,
+      },
+    });
+    render(<TetoScreen />);
+
+    const card = await screen.findByRole("region", { name: "Como o dia lê o teto" });
+    expect(flat(card)).toMatch(/R\$\s?38,00/);
+    expect(flat(card)).not.toMatch(/está medindo o Diário lançado contra este teto/);
+    expect(
+      within(card).getByRole("button", { name: /velocímetro/i }),
+    ).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /Diário/i })).toBeInTheDocument();
+  });
+
+  it("como o dia lê o teto, no cartão: a observação ganha o que já somou às faturas hoje", async () => {
+    mockCommands({
+      get_daily_budget_cmd: CEREMONY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      get_dashboard_summary: {
+        ...SUMMARY,
+        spending_mode: "card",
+        card_spend_today_cents: 12_000,
+      },
+    });
+    render(<TetoScreen />);
+
+    const card = await screen.findByRole("region", { name: "Como o dia lê o teto" });
+    expect(flat(card)).toMatch(/R\$\s?120,00/);
+    expect(flat(card)).not.toMatch(/cada compra no crédito soma nelas/);
+    expect(
+      within(card).getByRole("button", { name: /velocímetro/i }),
+    ).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /cartão/i })).toBeInTheDocument();
+  });
+
+  // Sem o operando (o resumo do dia ainda não chegou), a frase inteira recolhe: só o
+  // título vira o gatilho do popover do velocímetro — nunca uma cláusula sem dado.
+  it("como o dia lê o teto, sem o operando ainda: só título + gatilho, sem corpo", async () => {
+    mockCommands({
+      get_daily_budget_cmd: CEREMONY_BUDGET,
+      get_ceiling_proposal_cmd: null,
+      // Nunca resolve: summary fica pendente.
+      get_dashboard_summary: () => new Promise<never>(() => undefined),
+    });
+    render(<TetoScreen />);
+
+    await screen.findByRole("heading", {
+      level: 1,
+      name: /Seu dia comporta R\$\s?40,33/,
+    });
+    const card = await screen.findByRole("region", { name: "Como o dia lê o teto" });
+    expect(within(card).queryByRole("paragraph")).not.toBeInTheDocument();
+    expect(
+      within(card).getByRole("button", { name: "Como o dia lê o teto" }),
+    ).toBeInTheDocument();
   });
 
   it("a nota original da planilha é reproduzida atrás do disclosure", async () => {

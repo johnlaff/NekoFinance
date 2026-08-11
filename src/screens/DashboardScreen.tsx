@@ -961,11 +961,13 @@ function SaldoReserva({
               <NoRecordDash term={RESERVE_ZERO_TERM} label="Sem reserva" />
             ) : (
               <>
+                {/* Legenda de cálculo com o operando que a régua existe para mostrar: a
+                    distância até o alvo do método (regra 3, nunca recolhe). */}
                 {reserveMonths.toLocaleString("pt-BR", {
                   minimumFractionDigits: 1,
                   maximumFractionDigits: 1,
                 })}{" "}
-                meses{" "}
+                de {RESERVE_MIN_MONTHS} meses{" "}
                 {reserveState === "estimate" && (
                   <EstimateMark term={RESERVE_ESTIMATE_TERM} />
                 )}
@@ -988,9 +990,11 @@ function SaldoReserva({
                   aria-hidden="true"
                 />
                 <span>
-                  {reserveOk
-                    ? `Acima dos ${RESERVE_MIN_MONTHS} meses que o método pede`
-                    : `O método pede ${RESERVE_MIN_MONTHS} meses de custo de vida`}
+                  {/* A régua absoluta do método (6 meses) mora no termo tocável; a legenda
+                      acima já imprime a distância até o alvo — o dado deste bloco. */}
+                  <InfoPopover term="reserva" hideMarker>
+                    <span className="hoje__how">Reserva</span>
+                  </InfoPopover>
                 </span>
               </div>
               {/* Alcançado o alvo, a pergunta do método deixa de ser "quanto falta" e passa a

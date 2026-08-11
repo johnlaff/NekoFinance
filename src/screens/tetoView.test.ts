@@ -306,6 +306,35 @@ describe("o estado da manchete", () => {
     });
     expect(v.kind).toBe("chosen");
     expect(v.mode).toBe("debit");
+    expect(v.spentTodayCents).toBeNull();
+  });
+
+  // O operando do card "Como o dia lê o teto": no débito o velocímetro mede o Diário
+  // lançado hoje; no cartão, o que já somou às faturas em aberto hoje.
+  it("o operando do velocímetro segue o modo: Diário no débito, fatura no cartão", () => {
+    const debito = buildTetoView({
+      budget: budget(),
+      proposal: null,
+      summary: summary({
+        spending_mode: "debit",
+        daily_spend_today: 3_800,
+        card_spend_today_cents: 12_000,
+      }),
+      today: "2026-07-23",
+    });
+    expect(debito.spentTodayCents).toBe(3_800);
+
+    const cartao = buildTetoView({
+      budget: budget(),
+      proposal: null,
+      summary: summary({
+        spending_mode: "card",
+        daily_spend_today: 3_800,
+        card_spend_today_cents: 12_000,
+      }),
+      today: "2026-07-23",
+    });
+    expect(cartao.spentTodayCents).toBe(12_000);
   });
 });
 

@@ -61,8 +61,9 @@
     - button "Ver o mês ›"
     - text: /R\$ \d+\.\d+,\d+ Saldo hoje/
     - button "Termômetro"
-    - text: /Folga — acima dos R\$ \d+\.\d+ \d+,\d+ meses/
+    - text: /Folga — acima dos R\$ \d+\.\d+ \d+,\d+ de 6 meses/
     - button "Estimativa"
-    - text: Reserva de emergência O método pede 6 meses de custo de vida
+    - text: Reserva de emergência
+    - button "Reserva"
     - complementary "Leitura da Mia sobre a reserva":
       - paragraph: Retrato vivo com 4 de 6 meses completos de custo de vida — faltam 2 meses para a régua virar veredito.
