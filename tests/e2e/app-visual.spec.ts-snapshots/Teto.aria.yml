@@ -18,7 +18,6 @@
   - text: Teto do diário A cerimônia do gasto variável
   - paragraph: /Estipulado em setembro de \d+/
   - heading /Seu dia comporta R\$ \d+,\d+\./ [level=1]
-  - paragraph: O velocímetro do dia mede o Diário lançado contra este teto. O quanto dá para gastar hoje responde por outra régua — o caixa e a economia do ano; no dia a dia vale o mais apertado dos dois.
   - button "Modo débito"
   - region "A prova do número":
     - heading "A prova do número" [level=2]
@@ -29,12 +28,12 @@
     - text: Total do
     - button "mês variável"
     - text: /R\$ \d+\.\d+,\d+ Dividido por \d+ dias Teto por dia R\$ \d+,\d+/
-    - paragraph: Arredondado para cima, sempre — teto é teto.
+    - paragraph: Arredondado para cima.
     - group: › Ver a nota original da planilha
   - region "A cerimônia fez nove meses":
     - heading "A cerimônia fez nove meses" [level=2]:
       - button "A cerimônia fez nove meses"
-    - paragraph: O método recalibra de três em três meses — refaça quando o extrato contar outra história.
+    - paragraph: /Prazo vencido em dezembro de \d+\./
     - button "Recalibrar o teto"
   - region "Como o dia lê o teto":
     - heading "Como o dia lê o teto" [level=2]
