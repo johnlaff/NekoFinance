@@ -58,7 +58,8 @@
     - paragraph: /R\$ \d+\.\d+,\d+/
     - text: Folga
     - paragraph: /−R\$ \d+\.\d+,\d+ no dia/
-    - paragraph: Sem itens detalhados — o dia fecha no resumo.
+    - list:
+      - listitem: /Fatura do cartão de crédito −R\$ \d+,\d+/
     - list:
       - listitem: /Saídas fixas R\$ \d+\.\d+,\d+/
       - listitem: /Diário R\$ \d+,\d+/

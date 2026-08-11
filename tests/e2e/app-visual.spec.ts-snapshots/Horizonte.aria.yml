@@ -53,7 +53,7 @@
   - region "O que já está marcado":
     - heading "O que já está marcado" [level=2]
     - text: /Julho → Dezembro Entra R\$ \d+\.\d+,\d+ Sai −R\$ \d+\.\d+,\d+ \d+ dias com lançamento/
-    - group: /› Julho \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+ 5 Compromisso fixo demo Conta fixa −R\$ \d+,\d+ 8 Compromisso demo no crédito Parcela 3\/\d+ −R\$ \d+,\d+ \d+ Despesa demo variável Diário −R\$ \d+,\d+ \d+ Despesa fixa demo projetada Conta fixa −R\$ \d+\.\d+,\d+ \d+ Receita demo projetada Entrada R\$ \d+\.\d+,\d+/
+    - group: /› Julho \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+ 2 Fatura do cartão de crédito Diário −R\$ \d+,\d+ 3 Mensalidade demo Conta fixa −R\$ \d+,\d+ 5 Compromisso fixo demo Conta fixa −R\$ \d+,\d+ 8 Compromisso demo no crédito Parcela 3\/\d+ −R\$ \d+,\d+ \d+ Despesa demo variável Diário −R\$ \d+,\d+ \d+ Despesa fixa demo projetada Conta fixa −R\$ \d+\.\d+,\d+ \d+ Receita demo projetada Entrada R\$ \d+\.\d+,\d+/
     - group: /› Agosto \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
     - group: /› Setembro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
     - group: /› Outubro \+R\$ \d+\.\d+,\d+ · −R\$ \d+\.\d+,\d+/
