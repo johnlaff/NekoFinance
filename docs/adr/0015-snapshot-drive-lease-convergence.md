@@ -19,14 +19,20 @@ existente); um manifest de sequência monotônica por aparelho decide quem pode 
   dia, puxar, subir, conflito. Shell e UI só obedecem; nenhuma regra de posse mora fora dela.
 - **Force-with-lease**: subir é recusado sempre que o remoto avançou desde a base local — a
   mesma semântica do `git push --force-with-lease`. Ninguém sobrescreve o outro em silêncio.
-- **Remoto ausente ou regredido republica**: sem manifest publicado, ou com sequência remota
-  abaixo da base local, nada lá é mais novo para disputar — o veredito é `Push`, mesmo sem
-  mudança local nova. É o único jeito de restaurar o que a lixeira do Drive ("Excluir dados
-  ocultos do app") ou uma reversão manual apagou.
+- **Remoto ausente com base > 0, ou regredido abaixo da base, republica**: nada lá é mais novo
+  para disputar — o veredito é `Push`, mesmo sem mudança local nova. É o único jeito de
+  restaurar o que a lixeira do Drive ("Excluir dados ocultos do app") ou uma reversão manual
+  apagou. Instalação nova sem base local nem manifest remoto (`0, 0, None`) não cai aqui — é
+  `UpToDate`, o único jeito de nada ter para subir nem puxar.
 - **Conflito nunca funde**: quando os dois aparelhos avançaram a partir da mesma base, o dono
   escolhe o vencedor manualmente, vendo a lista de gestos do lado perdedor (lida do `sync_log`).
 - O transporte fica atrás do `appDataFolder` do Drive — invisível ao dono, escopo OAuth estreito
   (`drive.appdata`, não acesso aos arquivos do Google Drive do usuário).
+- **Convergência é total, não por assunto**: o snapshot é o banco inteiro, então nada nele
+  diverge entre aparelhos — inclusive o histórico de conversas da Mia, que mora na mesma tabela
+  SQLite que o resto do registro. As únicas exceções são as duas fronteiras estruturais do
+  princípio: credenciais (keyring/OAuth), que são identidade do aparelho, e estado derivado
+  localmente reconstruível (índice LanceDB), que se reconstrói a partir do que veio.
 
 ## Considered alternatives
 
