@@ -49,11 +49,12 @@ export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
 export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
 
 /** Mensagem exata do veredito `Pull` (`snapshot_cmds::CHECKIN_REFUSED_PULL`) — fonte única para
- *  os testes, em vez de um literal hardcoded solto. Esta fatia (issue #423) não tem
- *  check-out/pull/restore ainda, então a copy nunca instrui "baixe". */
+ *  os testes, em vez de um literal hardcoded solto. O check-out roda sozinho na PRÓXIMA abertura
+ *  do app (`snapshot::checkout`, Rust) — a copy pede esse gesto em vez de prometer um botão de
+ *  "baixar agora" que esta tela não tem. */
 export const CHECKIN_REFUSED_PULL =
-  "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
-  "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+  "Check-in recusado: outro aparelho publicou depois do seu último check-in — feche e abra " +
+  "o app de novo para receber a versão dele antes de publicar.";
 
 /** Mensagem exata do veredito `Conflict` (`snapshot_cmds::CHECKIN_REFUSED_CONFLICT`). Nunca diz
  *  "baixe" — aqui significaria descartar trabalho local sem aviso. */
@@ -152,6 +153,27 @@ export function driveCheckinLabel(
   return recency
     ? `Último check-in ${recency}, por ${device}.`
     : `Publicado por ${device}.`;
+}
+
+/**
+ * Rótulo do último check-out (a leitura do snapshot remoto ao abrir o app): recência + de qual
+ * aparelho veio. Espelha `driveCheckinLabel`, mas o eixo é o inverso (o que ESTE aparelho
+ * recebeu, não o que publicou) — por isso `last_checkout_device_id` nunca é comparado a
+ * `this_device_id`: o snapshot puxado sempre veio de OUTRO aparelho (puxar o próprio nunca é o
+ * veredito `Pull` do árbitro).
+ */
+export function driveCheckoutLabel(
+  info: DriveCheckinInfo | null | undefined,
+  now?: number,
+): string {
+  if (!info?.last_checkout_at) {
+    return "Nenhuma leitura do Drive ainda.";
+  }
+  const recency = syncRecencyLabel(info.last_checkout_at, now);
+  const device = `outro aparelho (${(info.last_checkout_device_id ?? "").slice(0, 8)})`;
+  return recency
+    ? `Última leitura ${recency}, de ${device}.`
+    : `Recebido de ${device}.`;
 }
 
 // --- Leitura -----------------------------------------------------------------------------

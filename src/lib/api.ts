@@ -1147,10 +1147,15 @@ export function lastSyncAt(): Promise<string | null> {
   return invoke("last_sync_at");
 }
 
-/** Quando/por qual aparelho foi o último check-in do snapshot no Drive. */
+/** Quando/por qual aparelho foi o último check-in E o último check-out do snapshot no Drive — os
+ *  dois eixos avançam de forma independente (um check-out sem check-in depois é normal). */
 export interface DriveCheckinInfo {
   last_checkin_at: string | null;
   last_checkin_device_id: string | null;
+  /** Quando este aparelho puxou por último o snapshot remoto (check-out ao abrir). */
+  last_checkout_at: string | null;
+  /** De qual aparelho veio o snapshot baixado no último check-out — nunca a identidade deste. */
+  last_checkout_device_id: string | null;
   this_device_id: string;
 }
 

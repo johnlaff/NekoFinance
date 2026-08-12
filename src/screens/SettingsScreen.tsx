@@ -52,6 +52,7 @@ import {
   driveCheckinCmd,
   driveCheckinErrorMessage,
   driveCheckinLabel,
+  driveCheckoutLabel,
   DRIVE_CHECKIN_UP_TO_DATE_NOTE,
   fetchAppInfo,
   fetchConfigSetting,
@@ -871,44 +872,49 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
   }
 
   return (
-    <Line
-      title="Snapshot no Drive"
-      sub={
-        <>
-          {needsReauth
-            ? "Reautorize o escopo do Drive para publicar o snapshot."
-            : driveCheckinLabel(info)}{" "}
-          {err ? (
-            <strong role="alert" className="config__err">
-              {err}
-            </strong>
-          ) : note ? (
-            // "Em dia" é sucesso (ADR-0015), não erro: role="status" anuncia o clique ao leitor
-            // de tela mesmo com o rótulo do botão inalterado; classe própria separa
-            // visualmente da linha do rótulo em vez de herdar `.config__what-s` de dentro dela.
-            <span role="status" className="config__note">
-              {note}
-            </span>
-          ) : null}
-        </>
-      }
-      right={
-        needsReauth ? (
-          <Button size="sm" variant="ghost" onClick={onNeedsReauth}>
-            Reconectar
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void doCheckin()}
-            disabled={busy || !isTauri || !GOOGLE_CLIENT_ID}
-          >
-            {busy ? "Publicando…" : "Fazer check-in"}
-          </Button>
-        )
-      }
-    />
+    <>
+      <Line
+        title="Snapshot no Drive"
+        sub={
+          <>
+            {needsReauth
+              ? "Reautorize o escopo do Drive para publicar o snapshot."
+              : driveCheckinLabel(info)}{" "}
+            {err ? (
+              <strong role="alert" className="config__err">
+                {err}
+              </strong>
+            ) : note ? (
+              // "Em dia" é sucesso (ADR-0015), não erro: role="status" anuncia o clique ao leitor
+              // de tela mesmo com o rótulo do botão inalterado; classe própria separa
+              // visualmente da linha do rótulo em vez de herdar `.config__what-s` de dentro dela.
+              <span role="status" className="config__note">
+                {note}
+              </span>
+            ) : null}
+          </>
+        }
+        right={
+          needsReauth ? (
+            <Button size="sm" variant="ghost" onClick={onNeedsReauth}>
+              Reconectar
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void doCheckin()}
+              disabled={busy || !isTauri || !GOOGLE_CLIENT_ID}
+            >
+              {busy ? "Publicando…" : "Fazer check-in"}
+            </Button>
+          )
+        }
+      />
+      {/* Check-out roda sozinho ao abrir o app (ADR-0015) — sem botão, só o registro de quando
+          e de qual aparelho veio a última leitura. */}
+      <Line title="Última leitura do Drive" sub={driveCheckoutLabel(info)} />
+    </>
   );
 }
 

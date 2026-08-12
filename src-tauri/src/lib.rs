@@ -163,8 +163,6 @@ pub fn run() {
             commands::check_update_space,
         ])
         .setup(|app| {
-            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-            use std::str::FromStr;
             use tauri::Manager;
             use tauri_plugin_dialog::DialogExt;
 
@@ -180,23 +178,24 @@ pub fn run() {
             // WAL: leituras não bloqueiam a escrita e o banco sobrevive melhor a um crash no meio de
             // uma transação (writes ficam num log à parte até o checkpoint). `foreign_keys` explícito
             // para não depender do default da conexão. Pool de 1 conexão (escritor único) preservado.
+            // `snapshot::checkout::open_migrated_pool` é a MESMA lógica de abertura que a restauração
+            // do snapshot reusa ao reabrir o banco depois de uma troca de arquivo — fonte única.
             let pool_result = tauri::async_runtime::block_on(async {
-                let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
-                    .map_err(|e| format!("URL do banco: {e}"))?
-                    .create_if_missing(true)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .foreign_keys(true);
+                let pool = snapshot::checkout::open_migrated_pool(&db_path).await?;
 
-                let pool = SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(opts)
-                    .await
-                    .map_err(|e| format!("abrir o banco: {e}"))?;
-
-                sqlx::migrate!("./migrations")
-                    .run(&pool)
-                    .await
-                    .map_err(|e| format!("migrações do banco: {e}"))?;
+                // Check-out ao abrir (ADR-0015): se o snapshot remoto avançou além da base local, ele
+                // é baixado, validado e troca o banco ativo ANTES de qualquer outra leitura/backfill
+                // rodar — os passos abaixo já operam sobre o estado convergido. Melhor esforço: nunca
+                // conectado, sem escopo, ou rede fora do ar apenas loga e segue com o banco de antes
+                // (offline pleno) — só um erro FATAL (arquivo trocado mas impossível reabrir) propaga.
+                let checkout =
+                    snapshot::checkout::checkout_on_open_best_effort(pool, &db_path, &app_dir)
+                        .await
+                        .map_err(|e| format!("check-out do snapshot: {e}"))?;
+                if let Err(e) = &checkout.outcome {
+                    eprintln!("[snapshot/checkout] {e}");
+                }
+                let pool = checkout.pool;
 
                 // Retenção do rastro técnico da conversa. Na abertura porque quem parou de
                 // conversar também para de purgar: sem esta passagem, um rastro venceria e ficaria.

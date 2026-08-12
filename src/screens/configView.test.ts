@@ -5,6 +5,7 @@ import {
   CHECKIN_REFUSED_PULL,
   driveCheckinErrorMessage,
   driveCheckinLabel,
+  driveCheckoutLabel,
   greetState,
 } from "./configView";
 
@@ -117,6 +118,8 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
       {
         last_checkin_at: "2026-08-11T14:55:00+00:00",
         last_checkin_device_id: "device-a",
+        last_checkout_at: null,
+        last_checkout_device_id: null,
         this_device_id: "device-a",
       },
       now,
@@ -129,11 +132,36 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
       {
         last_checkin_at: "2026-08-11T13:00:00+00:00",
         last_checkin_device_id: "device-bbbbbbbb-cccc",
+        last_checkout_at: null,
+        last_checkout_device_id: null,
         this_device_id: "device-a",
       },
       now,
     );
     expect(label).toBe("Último check-in há 2 h, por outro aparelho (device-b).");
+  });
+});
+
+describe("driveCheckoutLabel — recência + aparelho de origem do último check-out", () => {
+  const now = new Date("2026-08-11T15:00:00Z").getTime();
+
+  it("nenhuma leitura ainda", () => {
+    expect(driveCheckoutLabel(null, now)).toBe("Nenhuma leitura do Drive ainda.");
+    expect(driveCheckoutLabel(undefined, now)).toBe("Nenhuma leitura do Drive ainda.");
+  });
+
+  it("mostra de qual aparelho veio o snapshot puxado", () => {
+    const label = driveCheckoutLabel(
+      {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: "2026-08-11T14:55:00+00:00",
+        last_checkout_device_id: "device-bbbbbbbb-cccc",
+        this_device_id: "device-a",
+      },
+      now,
+    );
+    expect(label).toBe("Última leitura há 5 min, de outro aparelho (device-b).");
   });
 });
 
@@ -143,8 +171,8 @@ describe("driveCheckinErrorMessage — recusa do lease", () => {
   // atualizar o outro quebra este teste, em vez de deixar a suíte inteira verde com o
   // reconhecimento fora de sincronia com a produção.
   const RUST_CHECKIN_REFUSED_PULL =
-    "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
-    "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+    "Check-in recusado: outro aparelho publicou depois do seu último check-in — feche e abra " +
+    "o app de novo para receber a versão dele antes de publicar.";
   const RUST_CHECKIN_REFUSED_CONFLICT =
     "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os " +
     "aparelhos.";

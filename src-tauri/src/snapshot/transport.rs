@@ -125,6 +125,37 @@ impl DriveSnapshotClient {
         Ok(Some(manifest))
     }
 
+    /// Baixa os bytes do snapshot publicado (o `.db` inteiro) — `None` quando nenhum snapshot foi
+    /// publicado ainda. O espelho de `fetch_manifest`, mas sem decodificar: quem chama decide o
+    /// que fazer com os bytes brutos (`snapshot::restore` valida antes de qualquer troca).
+    pub async fn download_snapshot(&self) -> Result<Option<Vec<u8>>, String> {
+        let Some(file_id) = self.find_file_id(SNAPSHOT_FILE_NAME).await? else {
+            return Ok(None);
+        };
+
+        let url = format!("{}/drive/v3/files/{file_id}", self.base_url);
+        let resp = crate::http::send_with_retry(
+            crate::http::client()
+                .get(&url)
+                .query(&[("alt", "media")])
+                .bearer_auth(&self.token.access_token),
+        )
+        .await
+        .map_err(|e| format!("drive files.get error: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(google_error("Drive API", status, &body));
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("snapshot download: {e}"))?;
+        Ok(Some(bytes.to_vec()))
+    }
+
     /// Publica o snapshot (`db_bytes`, um arquivo SQLite íntegro produzido por `VACUUM INTO`) e o
     /// manifest que o acompanha. Cria os dois arquivos na primeira subida; nas seguintes,
     /// atualiza os MESMOS `fileId` (nunca duplica arquivo no `appDataFolder`).
@@ -301,6 +332,81 @@ mod tests {
         let client = DriveSnapshotClient::new(token(), server.url());
         let err = client.fetch_manifest().await.unwrap_err();
         assert!(err.contains("insufficient scope"), "erro devolvido: {err}");
+    }
+
+    #[tokio::test]
+    async fn download_snapshot_is_none_when_no_snapshot_file_exists_yet() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("spaces".into(), "appDataFolder".into()),
+                mockito::Matcher::UrlEncoded(
+                    "q".into(),
+                    "name = 'neko-snapshot.db' and trashed = false".into(),
+                ),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+
+        let client = DriveSnapshotClient::new(token(), server.url());
+        let found = client.download_snapshot().await.expect("download_snapshot");
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn download_snapshot_downloads_raw_bytes_when_present() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"files": [{"id": "snap-123", "name": "neko-snapshot.db"}]}"#)
+            .create_async()
+            .await;
+        let _get = server
+            .mock("GET", "/drive/v3/files/snap-123")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(b"SQLite format 3\0fake-db-bytes".as_slice())
+            .create_async()
+            .await;
+
+        let client = DriveSnapshotClient::new(token(), server.url());
+        let found = client
+            .download_snapshot()
+            .await
+            .expect("download_snapshot")
+            .expect("snapshot deveria existir");
+        assert_eq!(found, b"SQLite format 3\0fake-db-bytes");
+    }
+
+    #[tokio::test]
+    async fn download_snapshot_surfaces_drive_error_body() {
+        let mut server = mockito::Server::new_async().await;
+        let _list = server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-123", "name": "neko-snapshot.db"}]}"#)
+            .create_async()
+            .await;
+        let _get = server
+            .mock("GET", "/drive/v3/files/snap-123")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(500)
+            .with_body(r#"{"error": {"message": "backend hiccup"}}"#)
+            .create_async()
+            .await;
+
+        let client = DriveSnapshotClient::new(token(), server.url());
+        let err = client.download_snapshot().await.unwrap_err();
+        assert!(err.contains("backend hiccup"), "erro devolvido: {err}");
     }
 
     #[tokio::test]

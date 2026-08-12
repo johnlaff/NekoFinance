@@ -10,22 +10,29 @@ use sha2::{Digest, Sha256};
 /// lados juntos, no mesmo commit (o teste `checkin_refusal_messages_share_the_stable_contract_prefix`
 /// trava essa invariante deste lado).
 ///
-/// Veredito `Pull`: outro aparelho publicou depois do nosso último check-in. O app não oferece
-/// check-out/pull/restore do snapshot remoto, então a copy nunca instrui um gesto ("baixe")
-/// que a tela não tem como cumprir.
-pub const CHECKIN_REFUSED_PULL: &str = "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura \
-     dessa versão ainda não chegou a este app — chega numa atualização futura.";
+/// Veredito `Pull`: outro aparelho publicou depois do nosso último check-in. O check-out roda
+/// sozinho na PRÓXIMA abertura do app (`snapshot::checkout`) — a copy pede esse gesto em vez de
+/// prometer um botão de "baixar agora" que esta tela não tem.
+pub const CHECKIN_REFUSED_PULL: &str = "Check-in recusado: outro aparelho publicou depois do seu último check-in — feche e abra \
+     o app de novo para receber a versão dele antes de publicar.";
 
 /// Veredito `Conflict`: os dois lados avançaram a partir da mesma base. Nunca dizer "baixe" —
 /// aqui isso significaria descartar o trabalho local sem aviso.
 pub const CHECKIN_REFUSED_CONFLICT: &str = "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os \
      aparelhos.";
 
-/// O que a UI de Conexão mostra sobre o último check-in — quando e por qual aparelho.
+/// O que a UI de Conexão mostra sobre o último check-in E o último check-out — quando, e por/de
+/// qual aparelho, em cada eixo (os dois avançam de forma independente: um check-out sem check-in
+/// depois é normal, e vice-versa).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DriveCheckinInfo {
     pub last_checkin_at: Option<String>,
     pub last_checkin_device_id: Option<String>,
+    /// Quando este aparelho puxou por último o snapshot remoto (check-out ao abrir).
+    pub last_checkout_at: Option<String>,
+    /// `device_id` de quem publicou o snapshot que este aparelho baixou por último — de qual
+    /// aparelho veio, nunca a identidade deste.
+    pub last_checkout_device_id: Option<String>,
     pub this_device_id: String,
 }
 
@@ -45,6 +52,8 @@ pub async fn last_drive_checkin(pool: State<'_, SqlitePool>) -> Result<DriveChec
     Ok(DriveCheckinInfo {
         last_checkin_at: st.last_checkin_at,
         last_checkin_device_id: st.last_checkin_device_id,
+        last_checkout_at: st.last_checkout_at,
+        last_checkout_device_id: st.last_checkout_device_id,
         this_device_id: st.device_id,
     })
 }
@@ -104,14 +113,16 @@ pub(crate) async fn drive_checkin_core(
                 info: DriveCheckinInfo {
                     last_checkin_at: local_state.last_checkin_at,
                     last_checkin_device_id: local_state.last_checkin_device_id,
+                    last_checkout_at: local_state.last_checkout_at,
+                    last_checkout_device_id: local_state.last_checkout_device_id,
                     this_device_id: local_state.device_id,
                 },
                 published: false,
             });
         }
-        // Pull e Conflict têm copy PRÓPRIA: Pull não instrui "baixe" (esta fatia não tem
-        // check-out/pull/restore ainda) e Conflict não sugere um gesto que descartaria trabalho
-        // local sem aviso.
+        // Pull e Conflict têm copy PRÓPRIA: Pull pede reabrir o app (o check-out roda sozinho na
+        // próxima abertura, ver `snapshot::checkout`) e Conflict não sugere um gesto que
+        // descartaria trabalho local sem aviso.
         lease::LeaseVerdict::Pull => return Err(CHECKIN_REFUSED_PULL.into()),
         lease::LeaseVerdict::Conflict => return Err(CHECKIN_REFUSED_CONFLICT.into()),
     }
@@ -148,6 +159,8 @@ pub(crate) async fn drive_checkin_core(
         info: DriveCheckinInfo {
             last_checkin_at: Some(created_at),
             last_checkin_device_id: Some(local_state.device_id.clone()),
+            last_checkout_at: local_state.last_checkout_at,
+            last_checkout_device_id: local_state.last_checkout_device_id,
             this_device_id: local_state.device_id,
         },
         published: true,
@@ -470,8 +483,8 @@ mod tests {
 
         let err = drive_checkin_core(&pool, &app_dir, &drive2)
             .await
-            .expect_err("deve recusar com o veredito Pull, sem instruir gesto inexistente");
-        // Esta fatia (issue #423) não tem check-out/pull/restore — a copy nunca instrui "baixe".
+            .expect_err("deve recusar com o veredito Pull, sem instruir um botão que não existe");
+        // O check-out roda sozinho na próxima abertura do app — a copy pede esse gesto.
         assert_eq!(err, CHECKIN_REFUSED_PULL);
 
         // Estado local intocado: a base continua 1.

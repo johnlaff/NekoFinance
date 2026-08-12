@@ -12,19 +12,36 @@ pub struct SnapshotState {
     /// Hash (sha256 hex) do ÚLTIMO snapshot exportado por este aparelho — o jeito honesto de
     /// saber se um novo check-in tem algo de fato novo, sem hooks em todo gesto que muda o banco.
     pub last_export_sha256: Option<String>,
+    /// Quando este aparelho puxou por último o snapshot remoto (check-out).
+    pub last_checkout_at: Option<String>,
+    /// `device_id` do manifest remoto BAIXADO no último check-out — de qual aparelho veio o que
+    /// este recebeu, nunca a identidade deste aparelho (espelha `last_checkin_device_id`, que é
+    /// "por qual aparelho" do lado do check-in).
+    pub last_checkout_device_id: Option<String>,
 }
 
 /// Garante que a linha singleton existe, gerando `device_id` (UUID v4) na primeira leitura DESTE
 /// aparelho. Idempotente: chamadas seguintes só leem a linha já criada — nunca reemitem o id.
 pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
-    if let Some(row) =
-        sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, Option<String>)>(
-            "SELECT device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
-         last_export_sha256 FROM snapshot_state WHERE id = 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| format!("ler snapshot_state: {e}"))?
+    if let Some(row) = sqlx::query_as::<
+        _,
+        (
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
+         last_export_sha256, last_checkout_at, last_checkout_device_id \
+         FROM snapshot_state WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("ler snapshot_state: {e}"))?
     {
         return Ok(SnapshotState {
             device_id: row.0,
@@ -32,6 +49,8 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
             last_checkin_at: row.2,
             last_checkin_device_id: row.3,
             last_export_sha256: row.4,
+            last_checkout_at: row.5,
+            last_checkout_device_id: row.6,
         });
     }
 
@@ -48,6 +67,8 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
         last_checkin_at: None,
         last_checkin_device_id: None,
         last_export_sha256: None,
+        last_checkout_at: None,
+        last_checkout_device_id: None,
     })
 }
 
@@ -74,6 +95,41 @@ pub async fn record_checkin(
     .execute(pool)
     .await
     .map_err(|e| format!("gravar check-in: {e}"))?;
+    Ok(())
+}
+
+/// Semeia a linha singleton no banco RECÉM-RESTAURADO (o arquivo baixado do Drive, cujo
+/// `snapshot_state` veio VAZIO — `strip_from_export_copy` apaga a linha antes de qualquer
+/// publicação). `device_id` é o identificador que ESTE aparelho já tinha ANTES da troca de
+/// arquivo — precisa ser capturado pelo chamador antes do swap e passado aqui, nunca gerado de
+/// novo: a identidade do aparelho é bookkeeping local, não dado que viaja no snapshot.
+///
+/// `ON CONFLICT` (em vez de `INSERT` cru) porque o arquivo baixado, embora normalmente stripped,
+/// não é sob controle deste aparelho — um upsert idempotente é mais seguro que assumir a tabela
+/// vazia.
+pub async fn adopt_after_restore(
+    pool: &SqlitePool,
+    device_id: &str,
+    base_sequence: i64,
+    checked_out_at: &str,
+    remote_device_id: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO snapshot_state (id, device_id, base_sequence, last_checkout_at, last_checkout_device_id) \
+         VALUES (1, ?1, ?2, ?3, ?4) \
+         ON CONFLICT (id) DO UPDATE SET \
+            device_id = excluded.device_id, \
+            base_sequence = excluded.base_sequence, \
+            last_checkout_at = excluded.last_checkout_at, \
+            last_checkout_device_id = excluded.last_checkout_device_id",
+    )
+    .bind(device_id)
+    .bind(base_sequence)
+    .bind(checked_out_at)
+    .bind(remote_device_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("adotar estado pós-restauração: {e}"))?;
     Ok(())
 }
 
@@ -180,6 +236,126 @@ mod tests {
             Some(initial.device_id.as_str())
         );
         assert_eq!(after.last_export_sha256.as_deref(), Some("deadbeef"));
+    }
+
+    #[tokio::test]
+    async fn adopt_after_restore_leaves_preexisting_checkin_fields_untouched() {
+        // O upsert de `adopt_after_restore` só escreve device_id/base_sequence/check-out — quando
+        // a linha JÁ existe (a restauração aconteceu num banco com histórico de check-in próprio,
+        // não recém-criado), esse histórico sobrevive à troca de arquivo.
+        let pool = single_connection_pool().await;
+        let initial = load_or_init(&pool).await.expect("init");
+        record_checkin(
+            &pool,
+            1,
+            "2026-08-11 09:00:00",
+            &initial.device_id,
+            "seed-hash",
+        )
+        .await
+        .expect("record_checkin");
+
+        adopt_after_restore(
+            &pool,
+            &initial.device_id,
+            4,
+            "2026-08-12 08:00:00",
+            "outro-aparelho",
+        )
+        .await
+        .expect("adopt_after_restore");
+
+        let after = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(
+            after.base_sequence, 4,
+            "base avança para a sequência puxada"
+        );
+        assert_eq!(
+            after.last_checkout_at.as_deref(),
+            Some("2026-08-12 08:00:00")
+        );
+        assert_eq!(
+            after.last_checkout_device_id.as_deref(),
+            Some("outro-aparelho")
+        );
+        // Check-in não muda: check-out é um eixo independente do mesmo estado.
+        assert_eq!(after.device_id, initial.device_id);
+        assert_eq!(
+            after.last_checkin_at.as_deref(),
+            Some("2026-08-11 09:00:00")
+        );
+        assert_eq!(after.last_export_sha256.as_deref(), Some("seed-hash"));
+    }
+
+    #[tokio::test]
+    async fn adopt_after_restore_seeds_the_singleton_row_with_the_captured_device_id() {
+        let pool = single_connection_pool().await;
+        // Simula o banco RECÉM-RESTAURADO: `snapshot_state` chega vazio (stripped antes da
+        // publicação pelo aparelho de origem) — nenhuma linha ainda.
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM snapshot_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let captured_device_id = "device-que-ja-existia-antes-da-troca";
+        adopt_after_restore(
+            &pool,
+            captured_device_id,
+            7,
+            "2026-08-12 08:00:00",
+            "device-que-publicou",
+        )
+        .await
+        .expect("adopt_after_restore");
+
+        let after = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(
+            after.device_id, captured_device_id,
+            "a identidade deste aparelho sobrevive à troca de arquivo — nunca é regerada"
+        );
+        assert_eq!(after.base_sequence, 7);
+        assert_eq!(
+            after.last_checkout_at.as_deref(),
+            Some("2026-08-12 08:00:00")
+        );
+        assert_eq!(
+            after.last_checkout_device_id.as_deref(),
+            Some("device-que-publicou")
+        );
+        assert!(after.last_checkin_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn adopt_after_restore_is_idempotent_when_a_row_already_exists() {
+        let pool = single_connection_pool().await;
+        let initial = load_or_init(&pool).await.expect("init");
+
+        adopt_after_restore(
+            &pool,
+            &initial.device_id,
+            2,
+            "2026-08-12 08:00:00",
+            "device-que-publicou",
+        )
+        .await
+        .expect("primeira adoção");
+        adopt_after_restore(
+            &pool,
+            &initial.device_id,
+            5,
+            "2026-08-12 09:00:00",
+            "device-que-publicou-de-novo",
+        )
+        .await
+        .expect("segunda adoção não deve falhar por PK duplicada");
+
+        let after = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(after.base_sequence, 5);
+        assert_eq!(
+            after.last_checkout_device_id.as_deref(),
+            Some("device-que-publicou-de-novo")
+        );
     }
 
     #[tokio::test]
