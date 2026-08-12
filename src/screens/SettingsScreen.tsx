@@ -939,6 +939,41 @@ async function pollConnected(attempt: number): Promise<AuthStatus> {
   return status === "connected" ? status : pollConnected(attempt + 1);
 }
 
+interface GoogleReconnect {
+  reconnecting: boolean;
+  /** Tentativas NESTE ciclo de vida do app (zera sozinho ao reabrir). */
+  reconnectAttempts: number;
+  handleReconnect: () => void;
+}
+
+/** Força um novo fluxo OAuth (token novo). Necessário quando o app reporta "conectado" mas o
+ *  refresh token está morto (HTTP 400) — sem isso não há como refazer a autenticação. No Android,
+ *  o plugin de deep link tem uma limitação conhecida (upstream tauri-apps/plugins-workspace#2397):
+ *  um SEGUNDO deep link no mesmo processo pode não retornar ao app — `reconnectAttempts` deixa a
+ *  tela avisar a mitigação (reiniciar o app) a partir da segunda tentativa, antes de frustrar. */
+function useGoogleReconnect(
+  onAuthChange: (status: AuthStatus) => void,
+): GoogleReconnect {
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+
+  function handleReconnect() {
+    if (!GOOGLE_CLIENT_ID || reconnecting) return;
+    setReconnecting(true);
+    setReconnectAttempts((n) => n + 1);
+    connectGoogleCmd(GOOGLE_CLIENT_ID)
+      .then(() => pollConnected(0))
+      .then((status) => {
+        onAuthChange(status);
+        invalidateCommands();
+      })
+      .catch(() => undefined)
+      .finally(() => setReconnecting(false));
+  }
+
+  return { reconnecting, reconnectAttempts, handleReconnect };
+}
+
 export function SettingsScreen({
   authStatus,
   onAuthChange,
@@ -956,7 +991,8 @@ export function SettingsScreen({
   // Ligar FORÇA animações mesmo com o SO em movimento reduzido (escolha explícita).
   const [animacoes, setAnimacoes] = useState(() => motionEnabled());
   const [accent, setAccent] = useState<Accent>(() => getStoredAccent());
-  const [reconnecting, setReconnecting] = useState(false);
+  const { reconnecting, reconnectAttempts, handleReconnect } =
+    useGoogleReconnect(onAuthChange);
   const [manageOpen, setManageOpen] = useState(false);
   // A resposta do gesto vale até o backend ser relido — e nem um instante além. Ela guarda a
   // leitura que substituiu; quando o comando traz outra, o override caduca sozinho. Um override
@@ -981,21 +1017,6 @@ export function SettingsScreen({
     writeBack.conflictCount,
     isConnected ? syncRecencyLabel(lastSync) : null,
   );
-
-  /** Força um novo fluxo OAuth (token novo). Necessário quando o app reporta "conectado" mas o
-   *  refresh token está morto (HTTP 400) — sem isso não há como refazer a autenticação. */
-  function handleReconnect() {
-    if (!GOOGLE_CLIENT_ID || reconnecting) return;
-    setReconnecting(true);
-    connectGoogleCmd(GOOGLE_CLIENT_ID)
-      .then(() => pollConnected(0))
-      .then((status) => {
-        onAuthChange(status);
-        invalidateCommands();
-      })
-      .catch(() => undefined)
-      .finally(() => setReconnecting(false));
-  }
 
   return (
     <div className="config">
@@ -1058,6 +1079,12 @@ export function SettingsScreen({
           right={<span className="config__pill">Sempre</span>}
         />
         <DriveCheckinLine onNeedsReauth={handleReconnect} />
+        {isAndroid && reconnectAttempts >= 1 && (
+          <p role="status" className="config__note">
+            Uma nova reconexão nesta sessão pode não retornar ao app sozinha — se a tela
+            não avançar depois de aprovar no navegador, feche e reabra o Neko Finance.
+          </p>
+        )}
         <div className="config__panel">
           <ConflictGate onResolved={writeBack.refresh} />
           <WriteBackPending writeBack={writeBack} />

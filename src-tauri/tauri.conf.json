@@ -45,6 +45,14 @@
       "windows": {
         "installMode": "passive"
       }
+    },
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["app.neko.finance"],
+          "host": "oauth-callback"
+        }
+      ]
     }
   }
 }

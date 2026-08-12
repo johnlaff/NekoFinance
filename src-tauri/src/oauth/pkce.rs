@@ -1,3 +1,4 @@
+use super::redirect::RedirectStrategy;
 use oauth2::{
     AuthUrl, ClientId, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenUrl,
 };
@@ -73,17 +74,17 @@ pub fn resolve_client_secret(provided: Option<String>) -> Option<String> {
 pub struct OAuthState {
     pub verifier_secret: String,
     pub csrf_token: CsrfToken,
-    pub redirect_port: u16,
+    pub redirect: RedirectStrategy,
 }
 
 impl OAuthState {
-    pub fn new(redirect_port: u16) -> Self {
+    pub fn new(redirect: RedirectStrategy) -> Self {
         let verifier = generate_code_verifier();
         let csrf_token = CsrfToken::new(generate_random_string(32));
         Self {
             verifier_secret: verifier.secret().to_string(),
             csrf_token,
-            redirect_port,
+            redirect,
         }
     }
 
@@ -95,8 +96,8 @@ impl OAuthState {
         let client_id = ClientId::new(config.client_id.clone());
         let auth_url = AuthUrl::new(config.auth_url.clone()).expect("invalid auth URL");
         let token_url = TokenUrl::new(config.token_url.clone()).expect("invalid token URL");
-        let redirect_uri = RedirectUrl::new(format!("http://127.0.0.1:{}", self.redirect_port))
-            .expect("invalid redirect URL");
+        let redirect_uri =
+            RedirectUrl::new(self.redirect.redirect_uri()).expect("invalid redirect URL");
 
         let (auth_url, _csrf_token) = oauth2::basic::BasicClient::new(client_id)
             .set_auth_uri(auth_url)
@@ -164,7 +165,7 @@ mod tests {
     #[test]
     fn test_build_auth_url_contains_params() {
         let config = OAuthConfig::google("test-client-id.apps.googleusercontent.com".into(), None);
-        let state = OAuthState::new(48080);
+        let state = OAuthState::new(RedirectStrategy::Loopback { port: 48080 });
         let url = state.build_auth_url(&config);
         eprintln!("AUTH URL: {url}");
         assert!(url.contains("test-client-id"));

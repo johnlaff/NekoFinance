@@ -2,9 +2,13 @@
 //!
 //! `mia::key_store` e `oauth::token_store` guardam credenciais reais (a chave do provedor da Mia,
 //! o token do Google) e falam só com [`SecretVault`], nunca com `keyring::` diretamente. Este
-//! módulo é o adapter: hoje a única implementação é [`KeyringVault`], sobre o keyring nativo do
-//! desktop; quando o Android entrar, a implementação sobre o Keystore do sistema nasce aqui, e
-//! [`platform_vault`] passa a escolher por `cfg(target_os)` — sem o domínio mudar uma linha.
+//! módulo é o adapter: a única implementação é [`KeyringVault`], uma casca fina sobre
+//! `keyring::Entry` — e essa mesma casca serve o Android também. A seleção por `cfg(target_os)`
+//! (ADR-0014) não troca a STRUCT, troca qual back-end o `keyring::Entry` fala por baixo:
+//! [`install_platform_backend`] registra, uma vez no início do processo, o `CredentialBuilder`
+//! Android (crate `android-keyring`, gerando a chave AES não exportável no `AndroidKeyStore` via
+//! JNI e cifrando o valor numa `SharedPreferences` privada) antes de qualquer `KeyringVault` ser
+//! usado — no desktop essa chamada é no-op, o keyring já nasce com o back-end nativo do SO.
 
 /// Gravar, ler e apagar um segredo por serviço + usuário — o mesmo vocabulário que `keyring::Entry`
 /// já usa, para a implementação desktop ser uma casca fina sobre o crate existente.
@@ -48,11 +52,36 @@ impl SecretVault for KeyringVault {
     }
 }
 
-/// O cofre da plataforma corrente. Único ponto de seleção do processo inteiro — hoje sempre o
-/// desktop; o braço Android entra aqui quando existir.
+/// O cofre da plataforma corrente. Sempre [`KeyringVault`] — a variação por plataforma vive no
+/// back-end que [`install_platform_backend`] registra no `keyring`, não numa struct alternativa.
 pub(crate) fn platform_vault() -> &'static dyn SecretVault {
     static VAULT: KeyringVault = KeyringVault;
     &VAULT
+}
+
+/// Registra o back-end Android do `keyring` (AndroidKeyStore + SharedPreferences via JNI puro,
+/// sem plugin Kotlin — a leitura do contexto JNI vem de `ndk-context`, já inicializado pelo
+/// runtime mobile do Tauri antes de `run()` executar). Chame UMA vez, o quanto antes em `run()`,
+/// antes de qualquer `platform_vault()` ser usado — `token_store`/`mia::key_store` podem carregar
+/// um segredo já na abertura do app (sync em segundo plano). No-op em qualquer outra plataforma:
+/// o keyring já nasce com o back-end nativo do SO (Keychain/Credential Manager/Secret Service).
+///
+/// Nota de risco: `android-keyring` se declara "Experimental" — é a única integração Android para
+/// o `keyring` crate hoje (`keyring` 3.x não tem braço Android próprio) e usa a API nativa do
+/// AndroidKeyStore por baixo (não é uma cifra própria do crate), mas ainda não tem o histórico de
+/// produção do resto da pilha. O contrato compila e roda no alvo real (`aarch64-linux-android`);
+/// gravar/ler/apagar um segredo de verdade só se prova com o app rodando no aparelho — um cofre
+/// não exercido assim é uma lacuna, não uma prova, mesmo com o binário compilando limpo.
+pub(crate) fn install_platform_backend() {
+    #[cfg(target_os = "android")]
+    {
+        if let Err(error) = android_keyring::set_android_keyring_credential_builder() {
+            eprintln!(
+                "[secret_vault] falha ao registrar o cofre do AndroidKeyStore ({error}); \
+                 segredos caem no fallback de arquivo cifrado (NEKO_INSECURE_FILE_FALLBACK)"
+            );
+        }
+    }
 }
 
 /// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO lido tanto por `mia::key_store` quanto por
