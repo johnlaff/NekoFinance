@@ -166,7 +166,7 @@ Published beside the Snapshot: `device_id`, a monotonic `sequence`, `created_at`
 The pure arbiter comparing local sequence, base sequence (this device's last synced point) and the remote Manifest into a closed verdict — `UpToDate`, `Pull`, `Push`, `Conflict`. Force-with-lease semantics: `Push` is refused whenever the remote advanced past the local base, the same guarantee as `git push --force-with-lease`. Remote absent with base > 0, or regressed below the local base, also verdicts `Push` — nothing up there is newer to contest, so republishing is always safe and the only way to restore what a Drive trash/reset erased. A fresh install with nothing local (`0, 0, None`) is not this case — it verdicts `UpToDate`, since there is nothing anywhere yet to push. Shell and UI only obey the verdict, never re-derive it.
 
 **Check-in**:
-The gesture that exports a Snapshot and publishes it — the material change this arbiter's first slice (issue #423) recognizes. Automatic triggers (on close, on material gesture) and the mirrored check-out (pull on open) are later slices of the same spec.
+The gesture that exports a Snapshot and publishes it — the material change the arbiter recognizes. Today it is a manual command from Configurações; the app does not yet trigger it automatically (on close, on material gesture) or offer the mirrored check-out (pull on open).
 _Avoid_: sync (too generic — this app already has a different "sync" for the spreadsheet import)
 
 **Zero semantics at import**:
