@@ -10,7 +10,8 @@
     - button "Gerenciar"
     - text: Google Sheets Desconectado
     - button "Reconectar" [disabled]
-    - text: Escrita só com aprovação Nenhuma mudança na planilha sem seu OK. Sempre
+    - text: Escrita só com aprovação Nenhuma mudança na planilha sem seu OK. Sempre Snapshot no Drive Nenhum check-in ainda — publique o primeiro snapshot.
+    - button "Fazer check-in" [disabled]
     - region "Gerenciar conexão":
       - paragraph: Conecte sua conta Google para importar os dados da sua planilha.
       - button "Conectar Google" [disabled]
