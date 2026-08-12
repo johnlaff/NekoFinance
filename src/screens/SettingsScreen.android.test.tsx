@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SettingsScreen } from "./SettingsScreen";
 import { NekoAppProvider } from "../shell/appContext";
@@ -15,6 +16,7 @@ import {
 vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal()),
   isAndroid: true,
+  GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -87,5 +89,29 @@ describe("SettingsScreen — Android (isAndroid: true)", () => {
 
     expect(await screen.findByText(/Tauri Android/)).toBeInTheDocument();
     expect(screen.queryByText(/Tauri desktop/)).not.toBeInTheDocument();
+  });
+
+  describe("mitigação do segundo deep link (upstream tauri-apps/plugins-workspace#2397)", () => {
+    it("avisa a partir da primeira reconexão nesta sessão, nunca antes dela", async () => {
+      const user = userEvent.setup();
+      mockCommands({
+        get_app_info: APP_INFO,
+        start_oauth_flow: "oauth_started",
+        check_auth_status: "connected",
+      });
+      render(
+        <NekoAppProvider value={appCtx}>
+          <SettingsScreen authStatus="disconnected" onAuthChange={vi.fn()} />
+        </NekoAppProvider>,
+      );
+
+      const noteText = /pode não retornar ao app sozinha/;
+      expect(screen.queryByText(noteText)).not.toBeInTheDocument();
+
+      // O aviso nasce da própria contagem de cliques (síncrona ao handler), não do desfecho do
+      // fluxo OAuth em segundo plano — não precisa esperar o poll (2s) resolver.
+      await user.click(screen.getByRole("button", { name: "Reconectar" }));
+      expect(screen.getByText(noteText)).toBeInTheDocument();
+    });
   });
 });

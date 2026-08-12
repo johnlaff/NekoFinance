@@ -36,6 +36,11 @@ use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Antes de qualquer coisa: o back-end do cofre de segredos (ADR-0014) — `token_store`/
+    // `mia::key_store` podem carregar um segredo já no `.setup()` (sync em segundo plano), então
+    // isto precisa registrar antes de o builder ser montado. No-op fora do Android.
+    secret_vault::install_platform_backend();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
@@ -52,6 +57,11 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
+
+    // Retorno do OAuth por deep link: só o Android registra o plugin — o desktop segue no
+    // loopback HTTP e nunca precisa de um esquema de protocolo próprio.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -185,6 +195,17 @@ pub fn run() {
                 .expect("app data dir should exist");
             std::fs::create_dir_all(&app_dir)?;
             app.manage(AppDataDir(app_dir.clone()));
+
+            // Retorno do OAuth por deep link: o listener do plugin fica de pé pelo processo
+            // inteiro; cada `start_oauth_flow` só troca quem está esperando no canal gerenciado
+            // aqui (`commands::oauth_cmds::PendingAndroidOAuthCallback`).
+            #[cfg(target_os = "android")]
+            {
+                app.manage(commands::PendingAndroidOAuthCallback(
+                    std::sync::Mutex::new(None),
+                ));
+                commands::register_deep_link_listener(&app.handle().clone());
+            }
 
             let db_path = app_dir.join("neko-finance.db");
 
