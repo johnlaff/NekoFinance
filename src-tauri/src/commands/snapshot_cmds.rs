@@ -471,7 +471,8 @@ mod tests {
         let err = drive_checkin_core(&pool, &app_dir, &drive2)
             .await
             .expect_err("deve recusar com o veredito Pull, sem instruir gesto inexistente");
-        // Esta fatia (issue #423) não tem check-out/pull/restore — a copy nunca instrui "baixe".
+        // O app não oferece check-out/pull/restore do snapshot remoto, então a copy nunca
+        // instrui um gesto que a tela não tem como cumprir.
         assert_eq!(err, CHECKIN_REFUSED_PULL);
 
         // Estado local intocado: a base continua 1.

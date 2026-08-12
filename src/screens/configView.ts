@@ -49,8 +49,8 @@ export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
 export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
 
 /** Mensagem exata do veredito `Pull` (`snapshot_cmds::CHECKIN_REFUSED_PULL`) — fonte única para
- *  os testes, em vez de um literal hardcoded solto. Esta fatia (issue #423) não tem
- *  check-out/pull/restore ainda, então a copy nunca instrui "baixe". */
+ *  os testes, em vez de um literal hardcoded solto. O app não oferece check-out/pull/restore do
+ *  snapshot remoto, então a copy nunca instrui um gesto que a tela não tem como cumprir. */
 export const CHECKIN_REFUSED_PULL =
   "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
   "dessa versão ainda não chegou a este app — chega numa atualização futura.";

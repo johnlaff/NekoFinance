@@ -59,7 +59,13 @@ O perímetro de confiança não muda: o dado já vive no Google pela planilha; o
 
 - Merge por linha, CRDTs, motores de sync de terceiros — avaliados e descartados por pesquisa datada (imaturidade dos SDKs Rust e incompatibilidade com o driver atual).
 - Escrita simultânea de verdade em dois aparelhos: o modelo é aparelho-único-por-vez com conflito explícito. A evolução declarada para multi-escritor real é um Postgres próprio — decisão futura, com pesquisa própria já arquivada.
-- Sync do histórico de conversas da Mia e de qualquer estado fora do banco.
+- O histórico de conversas da Mia viaja no snapshot como consequência do modelo de banco
+  inteiro — mora na mesma tabela SQLite que o resto do registro (migration
+  `20260731000001_mia_conversation.sql`), sem filtro por assunto. As únicas exceções à
+  convergência total são as duas fronteiras do princípio, não recortes de assunto: credenciais
+  (keyring/OAuth) são identidade do aparelho e nunca viajam; estado derivado localmente
+  reconstruível (o índice LanceDB da Mia) fica fora do snapshot e se reconstrói a partir do que
+  veio, em vez de sincronizar.
 - Criptografia do snapshot além do transporte TLS e do isolamento do `appDataFolder`.
 
 ## Further Notes
