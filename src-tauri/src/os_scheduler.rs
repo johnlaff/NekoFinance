@@ -143,8 +143,27 @@ pub fn register(time_hhmm: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Android has no OS-level scheduler adapter (`WorkManager`/`AlarmManager` are a future slice of
+/// their own) — unlike macOS/Linux above, this is not deferred implementation work still
+/// pending, it is a deliberate platform gap the UI must show honestly. `Err` (not a logged
+/// `Ok`) is what lets `syncOsReminder` on the frontend surface the non-blocking warning instead of
+/// the toggle silently pretending an OS-level entry now exists.
+#[cfg(target_os = "android")]
+pub fn register(_time_hhmm: &str) -> Result<(), String> {
+    Err(
+        "lembrete no nível do sistema operacional ainda não está disponível no Android; \
+         o lembrete dispara enquanto o app está aberto"
+            .to_string(),
+    )
+}
+
 /// Catch-all for any other target: logged no-op.
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android"
+)))]
 pub fn register(time_hhmm: &str) -> Result<(), String> {
     eprintln!(
         "[os_scheduler] plataforma sem agendador OS-level; \
