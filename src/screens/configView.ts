@@ -1,10 +1,12 @@
 import {
   backupDatabase,
+  driveCheckin,
   getAppInfo,
   getAppSetting,
   getFlagSetting,
   getMiaConsent,
   grantMiaConsent,
+  lastDriveCheckin,
   lastSyncAt,
   registerOsReminder,
   revokeMiaConsent,
@@ -13,10 +15,57 @@ import {
   unregisterOsReminder,
   type AppInfo,
   type AuthStatus,
+  type DriveCheckinInfo,
+  type DriveCheckinResult,
   type MiaConsentView,
 } from "../lib/api";
+import { errorText, safeErrorMessage } from "../lib/errors";
+import { syncRecencyLabel } from "../lib/syncRecency";
 
-export type { AppInfo, AuthStatus, MiaConsentView };
+export type {
+  AppInfo,
+  AuthStatus,
+  DriveCheckinInfo,
+  DriveCheckinResult,
+  MiaConsentView,
+};
+
+/** Mensagem exata devolvida pelo backend (`oauth::token_store::NEEDS_DRIVE_REAUTH`) quando o
+ *  token não tem o escopo `drive.appdata` — casada por igualdade para levar ao fluxo de
+ *  reconexão, nunca a um erro cru. Precisa ficar em sincronia com a constante Rust. */
+export const NEEDS_DRIVE_REAUTH =
+  "Re-autorize para habilitar o snapshot no Drive: sua conexão atual não tem esse escopo.";
+
+/** Copy calma para o veredito "em dia" do check-in — sucesso (ADR-0015), nunca erro: nada mudou
+ *  desde a última publicação. */
+export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
+  "Já está em dia — nada novo para publicar.";
+
+/** Prefixo estável do contrato de recusa do check-in — `snapshot_cmds::CHECKIN_REFUSED_PULL` e
+ *  `CHECKIN_REFUSED_CONFLICT` (Rust) sempre começam por ele. A recusa é reconhecida por este
+ *  prefixo ESTRUTURAL, nunca por regex sobre as palavras da frase descritiva que segue (que
+ *  muda mais fácil que o contrato). Mudar este literal é mudança de contrato: atualize os dois
+ *  lados juntos, no mesmo commit. */
+export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
+
+/** Mensagem exata do veredito `Pull` (`snapshot_cmds::CHECKIN_REFUSED_PULL`) — fonte única para
+ *  os testes, em vez de um literal hardcoded solto. O app não oferece check-out/pull/restore do
+ *  snapshot remoto, então a copy nunca instrui um gesto que a tela não tem como cumprir. */
+export const CHECKIN_REFUSED_PULL =
+  "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
+  "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+
+/** Mensagem exata do veredito `Conflict` (`snapshot_cmds::CHECKIN_REFUSED_CONFLICT`). Nunca diz
+ *  "baixe" — aqui significaria descartar trabalho local sem aviso. */
+export const CHECKIN_REFUSED_CONFLICT =
+  "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os " +
+  "aparelhos.";
+
+export function driveCheckinErrorMessage(error: unknown): string {
+  const raw = errorText(error).trim();
+  if (raw.startsWith(CHECKIN_REFUSED_PREFIX)) return raw;
+  return safeErrorMessage(error, "Não foi possível fazer o check-in.");
+}
 
 export type GreetTone = "ok" | "warn" | "muted";
 
@@ -82,6 +131,29 @@ export function greetState(
   };
 }
 
+/**
+ * Rótulo do último check-in do snapshot no Drive: recência + por qual aparelho.
+ * "este aparelho" quando o check-in foi deste mesmo device_id; senão, os 8
+ * primeiros caracteres do id do outro aparelho — o suficiente para diferenciar sem expor o UUID
+ * inteiro numa linha de estado.
+ */
+export function driveCheckinLabel(
+  info: DriveCheckinInfo | null | undefined,
+  now?: number,
+): string {
+  if (!info?.last_checkin_at) {
+    return "Nenhum check-in ainda — publique o primeiro snapshot.";
+  }
+  const recency = syncRecencyLabel(info.last_checkin_at, now);
+  const isThisDevice = info.last_checkin_device_id === info.this_device_id;
+  const device = isThisDevice
+    ? "este aparelho"
+    : `outro aparelho (${(info.last_checkin_device_id ?? "").slice(0, 8)})`;
+  return recency
+    ? `Último check-in ${recency}, por ${device}.`
+    : `Publicado por ${device}.`;
+}
+
 // --- Leitura -----------------------------------------------------------------------------
 
 export function fetchAppInfo(): Promise<AppInfo> {
@@ -90,6 +162,10 @@ export function fetchAppInfo(): Promise<AppInfo> {
 
 export function fetchLastSyncAt(): Promise<string | null> {
   return lastSyncAt();
+}
+
+export function fetchLastDriveCheckin(): Promise<DriveCheckinInfo> {
+  return lastDriveCheckin();
 }
 
 export function fetchMiaConsent(): Promise<MiaConsentView> {
@@ -109,6 +185,13 @@ export function fetchConfigSetting(key: string): Promise<string | null> {
 
 export function backupDatabaseCmd(destPath: string): Promise<string> {
   return backupDatabase(destPath);
+}
+
+export function driveCheckinCmd(
+  clientId: string,
+  clientSecret?: string,
+): Promise<DriveCheckinResult> {
+  return driveCheckin(clientId, clientSecret);
 }
 
 export function grantMiaConsentCmd(): Promise<MiaConsentView> {

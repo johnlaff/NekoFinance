@@ -231,35 +231,89 @@ pub async fn ensure_valid_token(
     refresh_access_token(app_dir, client_id, client_secret).await
 }
 
+/// O escopo concedido (gravado no token na troca, ver `oauth::mod`) inclui `required`? O Google
+/// devolve os escopos concedidos separados por espaço; igualdade exata por token, não `contains`,
+/// para um escopo não casar por ser prefixo de outro (`spreadsheets.readonly` vs `spreadsheets`).
+/// Base de `scope_grants_write`/`scope_grants_drive_appdata` — cada consentimento novo que a UI
+/// precisa detectar reusa esta mesma comparação, só troca o escopo exigido.
+fn scope_grants(granted_scope: &str, required: &str) -> bool {
+    granted_scope.split_whitespace().any(|s| s == required)
+}
+
+/// Garante que o token armazenado satisfaz `grants` (`scope_grants_write`/`scope_grants_drive_appdata`).
+/// Reusa `ensure_valid_token` (refresh se expirado) e então valida o escopo concedido; em falta de
+/// escopo, devolve `needs_reauth_msg` em vez de propagar o 403 cru do provedor.
+async fn ensure_scope(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<&str>,
+    grants: impl Fn(&str) -> bool,
+    needs_reauth_msg: &str,
+) -> Result<StoredToken, String> {
+    let token = ensure_valid_token(app_dir, client_id, client_secret).await?;
+    if !grants(&token.scope) {
+        return Err(needs_reauth_msg.to_string());
+    }
+    Ok(token)
+}
+
 /// Mensagem acionável devolvida quando o token armazenado NÃO tem o escopo de escrita: o usuário
 /// precisa re-autorizar (o frontend a transforma num prompt de re-consentimento). Exposta como
 /// constante para o teste/UI casarem a string exata, em vez de espalhar o literal.
 pub const NEEDS_WRITE_REAUTH: &str =
     "Re-autorize para habilitar a escrita: sua conexão atual é somente leitura.";
 
-/// O escopo concedido (gravado no token na troca, ver `oauth::mod`) inclui a escrita na planilha?
-/// O Google devolve os escopos concedidos separados por espaço. Um token sem o escopo
-/// `spreadsheets` só permite leitura; esta checagem faz a rota de apply falhar cedo com um erro de
-/// re-consentimento em vez de propagar o 403 cru.
+/// O escopo concedido inclui a escrita na planilha? Um token sem o escopo `spreadsheets` só
+/// permite leitura; esta checagem faz a rota de apply falhar cedo com um erro de re-consentimento.
 pub fn scope_grants_write(granted_scope: &str) -> bool {
-    granted_scope
-        .split_whitespace()
-        .any(|s| s == super::pkce::SHEETS_WRITE_SCOPE)
+    scope_grants(granted_scope, super::pkce::SHEETS_WRITE_SCOPE)
 }
 
-/// Garante que o token armazenado pode ESCREVER na planilha. Reusa `ensure_valid_token` (refresh se
-/// expirado) e então valida o escopo concedido; em falta de escopo, devolve `NEEDS_WRITE_REAUTH`.
-/// A rota de apply chama isto ANTES de tentar a escrita real.
+/// Garante que o token armazenado pode ESCREVER na planilha; em falta de escopo, devolve
+/// `NEEDS_WRITE_REAUTH`. A rota de apply chama isto ANTES de tentar a escrita real.
 pub async fn ensure_write_scope(
     app_dir: &std::path::Path,
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
-    let token = ensure_valid_token(app_dir, client_id, client_secret).await?;
-    if !scope_grants_write(&token.scope) {
-        return Err(NEEDS_WRITE_REAUTH.to_string());
-    }
-    Ok(token)
+    ensure_scope(
+        app_dir,
+        client_id,
+        client_secret,
+        scope_grants_write,
+        NEEDS_WRITE_REAUTH,
+    )
+    .await
+}
+
+/// Mensagem acionável devolvida quando o token armazenado NÃO tem o escopo `drive.appdata`: o
+/// usuário precisa re-autorizar (o frontend a detecta por igualdade exata e leva ao fluxo de
+/// reconexão, nunca a um erro cru).
+pub const NEEDS_DRIVE_REAUTH: &str =
+    "Re-autorize para habilitar o snapshot no Drive: sua conexão atual não tem esse escopo.";
+
+/// O escopo concedido inclui a pasta oculta do app no Drive (`drive.appdata`)? Um token anterior
+/// ao consentimento do snapshot não tem esse escopo — o check-in falha cedo com um erro
+/// de re-consentimento em vez de propagar o 403 cru do Drive.
+pub fn scope_grants_drive_appdata(granted_scope: &str) -> bool {
+    scope_grants(granted_scope, super::pkce::DRIVE_APPDATA_SCOPE)
+}
+
+/// Garante que o token armazenado pode publicar no `appDataFolder`; em falta de escopo, devolve
+/// `NEEDS_DRIVE_REAUTH`. O comando de check-in chama isto ANTES de qualquer chamada ao Drive.
+pub async fn ensure_drive_scope(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<StoredToken, String> {
+    ensure_scope(
+        app_dir,
+        client_id,
+        client_secret,
+        scope_grants_drive_appdata,
+        NEEDS_DRIVE_REAUTH,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -328,6 +382,26 @@ mod tests {
         // O readonly NÃO deve casar por ser prefixo do de escrita (split por espaço, igualdade exata).
         assert!(!scope_grants_write(
             "https://www.googleapis.com/auth/spreadsheets.readonly"
+        ));
+    }
+
+    #[test]
+    fn scope_grants_drive_appdata_detects_missing_vs_granted_scope() {
+        // Token de antes do escopo do snapshot existir → sem drive.appdata; precisa re-autorizar.
+        assert!(!scope_grants_drive_appdata(
+            "https://www.googleapis.com/auth/spreadsheets \
+             https://www.googleapis.com/auth/drive.metadata.readonly"
+        ));
+        assert!(!scope_grants_drive_appdata(""));
+        // Token novo (re-consentimento concedido) → pode publicar o snapshot.
+        assert!(scope_grants_drive_appdata(
+            "https://www.googleapis.com/auth/spreadsheets \
+             https://www.googleapis.com/auth/drive.metadata.readonly \
+             https://www.googleapis.com/auth/drive.appdata"
+        ));
+        // `drive.metadata.readonly` não deve casar por conter "drive." como prefixo comum.
+        assert!(!scope_grants_drive_appdata(
+            "https://www.googleapis.com/auth/drive.metadata.readonly"
         ));
     }
 

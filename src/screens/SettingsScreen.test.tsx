@@ -9,7 +9,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { appCacheDir, join } from "@tauri-apps/api/path";
 import type * as ConfigView from "./configView";
+import type * as Env from "../lib/env";
 import {
+  CHECKIN_REFUSED_CONFLICT,
+  CHECKIN_REFUSED_PULL,
   fetchMiaConsent,
   grantMiaConsentCmd,
   revokeMiaConsentCmd,
@@ -23,6 +26,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
+}));
+
+vi.mock("../lib/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof Env>()),
+  GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
@@ -580,5 +588,93 @@ describe("ShowReceiptLine", () => {
         value: "false",
       }),
     );
+  });
+});
+
+// Estes testes atravessam a costura backend↔tela: os fixtures usam exatamente o que os
+// comandos Rust (snapshot_cmds.rs) realmente devolvem — RFC3339 em `last_checkin_at`, a
+// mensagem verbatim da recusa do lease, o `published: false` do veredito "em dia" — em vez de
+// um formato conveniente só assumido pelo teste.
+describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+  });
+
+  it("Pull: mostra a recusa VERBATIM, sem instruir um gesto que a fatia não tem", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        this_device_id: "aparelho-a",
+      },
+      drive_checkin: new Error(CHECKIN_REFUSED_PULL),
+    });
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
+
+    expect(await screen.findByText(CHECKIN_REFUSED_PULL)).toBeInTheDocument();
+  });
+
+  it("Conflict: mostra a recusa VERBATIM, sem sugerir descartar trabalho local", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        this_device_id: "aparelho-a",
+      },
+      drive_checkin: new Error(CHECKIN_REFUSED_CONFLICT),
+    });
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
+
+    expect(await screen.findByText(CHECKIN_REFUSED_CONFLICT)).toBeInTheDocument();
+  });
+
+  it("'em dia' é sucesso: copy calma, anunciada por role=status, nunca role=alert", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: "2026-08-11T10:00:00+00:00",
+        last_checkin_device_id: "aparelho-a",
+        this_device_id: "aparelho-a",
+      },
+      drive_checkin: {
+        last_checkin_at: "2026-08-11T10:00:00+00:00",
+        last_checkin_device_id: "aparelho-a",
+        this_device_id: "aparelho-a",
+        published: false,
+      },
+    });
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
+
+    const note = await screen.findByText("Já está em dia — nada novo para publicar.");
+    // "Em dia" é o caso normal, não uma falha: precisa ser ANUNCIADO ao leitor de tela (o
+    // rótulo do botão não muda, então sem role="status" o clique some em silêncio), mas nunca
+    // dentro de uma região role="alert" (regra 16 de docs/ui-standards.md).
+    expect(note.closest('[role="status"]')).not.toBeNull();
+    expect(note.closest('[role="alert"]')).toBeNull();
+  });
+
+  it("mostra a recência do último check-in a partir do timestamp real do comando (RFC3339)", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: "2026-08-11T14:55:00+00:00",
+        last_checkin_device_id: "aparelho-a",
+        this_device_id: "aparelho-a",
+      },
+    });
+    renderSettings();
+
+    expect(await screen.findByText(/Último check-in/)).toBeInTheDocument();
   });
 });

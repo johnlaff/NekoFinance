@@ -1147,6 +1147,33 @@ export function lastSyncAt(): Promise<string | null> {
   return invoke("last_sync_at");
 }
 
+/** Quando/por qual aparelho foi o último check-in do snapshot no Drive. */
+export interface DriveCheckinInfo {
+  last_checkin_at: string | null;
+  last_checkin_device_id: string | null;
+  this_device_id: string;
+}
+
+/** Resultado do gesto de check-in: além do estado (`info`), diz se este clique de fato subiu
+ *  algo novo. "Em dia" (`published: false`) é sucesso — nada mudou desde a última publicação,
+ *  não um erro (ADR-0015). */
+export interface DriveCheckinResult extends DriveCheckinInfo {
+  published: boolean;
+}
+
+export function lastDriveCheckin(): Promise<DriveCheckinInfo> {
+  return invoke("last_drive_checkin");
+}
+
+/** Exporta o banco e publica o snapshot no `appDataFolder` do Drive, com o manifest de
+ *  sequência. Recusa quando outro aparelho publicou depois da nossa base local. */
+export function driveCheckin(
+  clientId: string,
+  clientSecret?: string,
+): Promise<DriveCheckinResult> {
+  return invoke("drive_checkin", { clientId, clientSecret: clientSecret ?? null });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }

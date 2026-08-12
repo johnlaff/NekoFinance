@@ -10,7 +10,7 @@ use serde::Deserialize;
 /// Reduz um corpo de erro HTTP do Google a uma linha segura: usa `error.message` do
 /// JSON padrão da API quando presente; senão trunca o corpo bruto. Evita despejar
 /// payloads upstream (IDs, ranges, metadados) em logs e na UI.
-fn google_error(context: &str, status: reqwest::StatusCode, body: &str) -> String {
+pub(crate) fn google_error(context: &str, status: reqwest::StatusCode, body: &str) -> String {
     let msg = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))

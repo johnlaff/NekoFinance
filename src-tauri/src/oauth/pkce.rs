@@ -7,6 +7,12 @@ use rand::RngExt;
 /// usa esta mesma string para detectar um token antigo (somente leitura) e exigir re-autorização.
 pub const SHEETS_WRITE_SCOPE: &str = "https://www.googleapis.com/auth/spreadsheets";
 
+/// Escopo da pasta oculta do app no Drive, usado pelo snapshot de convergência entre aparelhos.
+/// `drive.appdata` alcança só os arquivos que o PRÓPRIO app criou nessa pasta reservada — nunca os
+/// arquivos do Google Drive do usuário. Fonte única da verdade — `token_store` usa esta mesma
+/// string para detectar um token antigo (sem o escopo) e exigir re-autorização.
+pub const DRIVE_APPDATA_SCOPE: &str = "https://www.googleapis.com/auth/drive.appdata";
+
 pub fn generate_code_verifier() -> PkceCodeVerifier {
     PkceCodeVerifier::new(generate_random_string(64))
 }
@@ -106,6 +112,8 @@ impl OAuthState {
             .add_scope(Scope::new(
                 "https://www.googleapis.com/auth/drive.metadata.readonly".to_string(),
             ))
+            // Snapshot de convergência entre aparelhos — só a pasta oculta do app.
+            .add_scope(Scope::new(DRIVE_APPDATA_SCOPE.to_string()))
             // `access_type=offline` + `prompt=consent` garantem o refresh_token: Google só o
             // devolve com offline, e `consent` força reemissão mesmo em reautorizações. Sem o
             // refresh_token, a conexão expira junto com o access token.
@@ -176,6 +184,9 @@ mod tests {
         );
         // O picker de planilhas depende do escopo de metadados do Drive.
         assert!(url.contains("drive.metadata.readonly"));
+        // O snapshot de convergência entre aparelhos exige a pasta oculta do app no Drive — nunca
+        // acesso aos arquivos do Google Drive do usuário.
+        assert!(url.contains("drive.appdata"));
     }
 
     #[test]
