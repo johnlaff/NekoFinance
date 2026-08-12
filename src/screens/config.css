@@ -169,6 +169,13 @@
 .config__err {
   color: var(--danger-400);
 }
+/* Nota de sucesso calma ("em dia") — própria linha, sem a cor de erro, para não grudar no
+   rótulo como frase corrida: a hierarquia tipográfica separa em vez de bordas. */
+.config__note {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+}
 .config__path {
   margin-top: var(--space-1);
   font-size: var(--fs-micro);

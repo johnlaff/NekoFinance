@@ -37,4 +37,20 @@ describe("syncRecencyLabel", () => {
   it("timestamp futuro (clock skew) não vira negativo", () => {
     expect(syncRecencyLabel("2026-07-23 18:00:30", NOW)).toBe("agora mesmo");
   });
+
+  it("RFC3339 com 'T' e offset explícito (snapshot_cmds.rs) é aceito", () => {
+    expect(syncRecencyLabel("2026-07-23T17:42:00+00:00", NOW)).toBe("há 18 min");
+  });
+
+  it("RFC3339 com 'T' e sufixo Z é aceito", () => {
+    expect(syncRecencyLabel("2026-07-23T17:42:00Z", NOW)).toBe("há 18 min");
+  });
+
+  it(
+    "'T' SEM offset/Z é rejeitado — nenhum produtor gera essa forma, e aceitá-la leria a hora " +
+      "como LOCAL do navegador (recência errada-mas-plausível)",
+    () => {
+      expect(syncRecencyLabel("2026-07-23T17:42:00", NOW)).toBeNull();
+    },
+  );
 });
