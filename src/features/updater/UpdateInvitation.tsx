@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import { Button } from "../../design-system/components/Button";
 import { InfoPopover } from "../../design-system/components/InfoPopover";
 import { Meter } from "../../design-system/components/Meter";
-import { isTauri } from "../../lib/env";
+import { isAndroid, isTauri } from "../../lib/env";
 import {
   blockedSpaceExplainer,
   downloadFraction,
@@ -72,7 +72,9 @@ export function UpdateInvitation({
   const [dismissedOffer, setDismissedOffer] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isTauri) return;
+    // O Android não tem plugin de updater: checar aqui só produziria uma chamada fadada a
+    // falhar, e o convite nunca teria o que oferecer nesta plataforma de qualquer forma.
+    if (!isTauri || isAndroid) return;
     void machine.checkForUpdate();
   }, [machine]);
 

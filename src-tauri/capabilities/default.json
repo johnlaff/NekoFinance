@@ -11,6 +11,7 @@
     "notification:default",
     "updater:default",
     "process:default",
+    "os:default",
     "fs:read-files",
     "fs:allow-appcache-write-recursive"
   ]

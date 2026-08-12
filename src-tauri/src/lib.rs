@@ -36,13 +36,24 @@ use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_fs::init());
+
+    // Updater e relaunch pós-instalação não existem no Android: a Play Store ou a
+    // distribuição lateral são quem atualiza, não um plugin em processo. Registrar mesmo assim
+    // deixaria o front chamar um comando que nunca teria o que fazer — o front detecta a
+    // plataforma via `tauri-plugin-os` e mostra estado honesto de indisponibilidade em vez de
+    // depender de uma chamada que falharia.
+    #[cfg(not(target_os = "android"))]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::start_oauth_flow,

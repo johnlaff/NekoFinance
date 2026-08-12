@@ -7,6 +7,16 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", {
   configurable: true,
 });
 
+// `@tauri-apps/plugin-os` reads this global synchronously (no `invoke` round trip) — real Tauri
+// injects it before any frontend JS runs, and `lib/env.ts` guards on its presence before calling
+// `platform()`. Desktop is the default here; `vi.mock("../../lib/env", ...)` is how individual
+// tests fake Android.
+Object.defineProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__", {
+  value: { platform: "linux" },
+  writable: true,
+  configurable: true,
+});
+
 // jsdom doesn't implement ResizeObserver (the compare charts measure their container to
 // draw 1:1 pixels). No-op stub: components fall back to their default width in tests;
 // real measurement is covered by the Playwright visual specs.

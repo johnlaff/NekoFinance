@@ -30,7 +30,7 @@ import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import { ACCENTS, applyAccent, getStoredAccent, type Accent } from "../lib/accent";
 import { useNekoApp } from "../shell/appContext";
-import { GOOGLE_CLIENT_ID, isTauri, SHOW_RECEIPT } from "../lib/env";
+import { GOOGLE_CLIENT_ID, isAndroid, isTauri, SHOW_RECEIPT } from "../lib/env";
 import {
   motionEnabled,
   setMotionPreference,
@@ -1231,7 +1231,8 @@ export function SettingsScreen({
 
       {/* ── Rodapé quieto ──────────────────────────────────────── */}
       <p className="config__foot">
-        Neko Finance {appInfo ? `v${appInfo.version}` : "—"} · Tauri desktop
+        Neko Finance {appInfo ? `v${appInfo.version}` : "—"} ·{" "}
+        {isAndroid ? "Tauri Android" : "Tauri desktop"}
         {!isTauri ? (
           <>
             <br />
