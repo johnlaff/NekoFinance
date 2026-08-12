@@ -10,9 +10,9 @@ use sha2::{Digest, Sha256};
 /// lados juntos, no mesmo commit (o teste `checkin_refusal_messages_share_the_stable_contract_prefix`
 /// trava essa invariante deste lado).
 ///
-/// Veredito `Pull`: outro aparelho publicou depois do nosso último check-in. Esta fatia (issue
-/// #423) ainda não tem check-out/pull/restore — chega em fatia futura da spec 043 — então a
-/// copy nunca instrui um gesto ("baixe") que o app ainda não oferece.
+/// Veredito `Pull`: outro aparelho publicou depois do nosso último check-in. O app não oferece
+/// check-out/pull/restore do snapshot remoto, então a copy nunca instrui um gesto ("baixe")
+/// que a tela não tem como cumprir.
 pub const CHECKIN_REFUSED_PULL: &str = "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura \
      dessa versão ainda não chegou a este app — chega numa atualização futura.";
 
