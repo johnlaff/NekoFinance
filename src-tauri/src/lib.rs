@@ -53,6 +53,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
+    // O braço Android do cofre de segredos (ADR-0014, cláusula 2) — sem equivalente desktop, que
+    // já alcança o keyring nativo direto via `keyring::Entry`.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_secure_vault::init());
+
     builder
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
@@ -185,6 +190,12 @@ pub fn run() {
                 .expect("app data dir should exist");
             std::fs::create_dir_all(&app_dir)?;
             app.manage(AppDataDir(app_dir.clone()));
+
+            // O plugin do cofre já terminou o próprio `setup()` (plugins inicializam antes do
+            // `setup()` do app) — o identificador fica pronto antes de qualquer comando que
+            // possa precisar dele.
+            #[cfg(target_os = "android")]
+            secret_vault::android::install_handle(app.handle().clone());
 
             let db_path = app_dir.join("neko-finance.db");
 

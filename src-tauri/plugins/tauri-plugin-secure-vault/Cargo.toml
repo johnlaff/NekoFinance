@@ -1,0 +1,14 @@
+[package]
+name = "tauri-plugin-secure-vault"
+version = "0.1.0"
+description = "Ponte para o cofre de segredos nativo do Android (Keystore via EncryptedSharedPreferences) consumida pelo adapter SecretVault do shell — sem equivalente em desktop, onde o cofre nativo do SO já é alcançado direto pelo crate keyring."
+edition = "2024"
+links = "tauri-plugin-secure-vault"
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "=2.6.3", features = ["build"] }

@@ -75,6 +75,13 @@ notify-rust = "=4.18.0"
 # síncrona, sem precisar do runtime tokio da feature "tokio".
 fs4 = "=1.1.0"
 
+# O crate `keyring` (linha 65) não tem braço Android (ADR-0014/spec 042) — este plugin local é
+# o adapter real, sobre o Keystore do sistema via `EncryptedSharedPreferences` (Kotlin em
+# `plugins/tauri-plugin-secure-vault/android`). Gated por plataforma para nunca entrar no grafo
+# de dependências do desktop.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-secure-vault = { path = "plugins/tauri-plugin-secure-vault" }
+
 [dev-dependencies]
 # Borda HTTP mockada para o transporte do snapshot no Drive (spec 043) — sobe um servidor local
 # efêmero, nenhum teste toca a rede real.
