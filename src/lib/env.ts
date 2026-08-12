@@ -1,3 +1,5 @@
+import { platform } from "@tauri-apps/plugin-os";
+
 /**
  * Flags de ambiente resolvidas em tempo de build/carregamento. Não são contrato do backend
  * (não há `invoke` aqui) — por isso moram fora do funil de `lib/api` e são importáveis de
@@ -6,6 +8,15 @@
 
 /** True when running inside the Tauri shell (vs plain web preview). */
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/**
+ * True no Android — a única leitura de plataforma que o front precisa: as superfícies sem
+ * adapter Android (updater, lembrete no nível do SO) mostram estado honesto de
+ * indisponibilidade em vez de silenciar como se a checagem tivesse rodado. `platform()`
+ * (`@tauri-apps/plugin-os`) lê um valor injetado em `window` na inicialização do plugin — só
+ * existe dentro do shell Tauri, daí o guard de `isTauri` antes de chamá-la.
+ */
+export const isAndroid = isTauri && platform() === "android";
 
 /** Google OAuth client id baked at build time. Empty string when not configured. */
 export const GOOGLE_CLIENT_ID =

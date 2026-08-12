@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { Button } from "../../design-system/components/Button";
 import { InfoPopover } from "../../design-system/components/InfoPopover";
 import { Meter } from "../../design-system/components/Meter";
+import { isAndroid } from "../../lib/env";
 import { Line } from "../../screens/configLine";
 import {
   blockedSpaceExplainer,
@@ -51,6 +52,19 @@ export function UpdateSettingsBlock({
     (listener) => machine.subscribe(listener),
     () => machine.getState(),
   );
+
+  // O Android não tem plugin de updater — a distribuição lateral por ADB é quem atualiza:
+  // mostrar "ocioso" mentiria uma checagem que nunca roda, e um "Verificar agora" clicável
+  // convidaria a uma chamada fadada a falhar.
+  if (isAndroid) {
+    return (
+      <Line
+        title="Verificar atualizações"
+        sub="Atualização automática não está disponível no Android — instale a versão mais nova pelo ADB."
+      />
+    );
+  }
+
   const { headline, detail } = updateStatusCopy(state);
   const fraction =
     state.status === "downloading" ? downloadFraction(state.progress) : null;

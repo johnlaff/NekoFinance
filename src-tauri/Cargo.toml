@@ -37,6 +37,10 @@ tauri-plugin-fs = "=2.5.1"
 tauri-plugin-notification = "=2.3.3"
 tauri-plugin-updater = "=2.10.1"
 tauri-plugin-process = "=2.3.1"
+# Detecção de plataforma no front (`platform()`), para as superfícies sem equivalente Android
+# (updater, lembrete no nível do SO) mostrarem estado honesto de indisponibilidade em vez de
+# silenciar como se tivessem rodado.
+tauri-plugin-os = "=2.3.2"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
