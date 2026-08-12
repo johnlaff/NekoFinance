@@ -23,11 +23,20 @@ pub enum LeaseVerdict {
 /// sequência BASE (a última que este aparelho sincronizou) e o manifest remoto — `None` quando
 /// nenhum snapshot foi publicado ainda, tratado como sequência remota zero.
 ///
-/// Função TOTAL: mesmo uma entrada que não deveria surgir na prática (`local < base`, um estado
-/// remoto que regrediu) cai em "não avançou" em vez de entrar em pânico — o árbitro nunca falha,
-/// só devolve o veredito que a comparação de sequências sustenta.
+/// Função TOTAL: mesmo uma entrada que não deveria surgir na prática (`local < base`) cai em
+/// "não avançou" em vez de entrar em pânico — o árbitro nunca falha, só devolve o veredito que a
+/// comparação de sequências sustenta.
+///
+/// Remoto REGREDIDO (sequência abaixo da base) ou AUSENTE com `base > 0` conta como o mesmo
+/// caso: o dono publicou antes e o manifest sumiu de lá (lixeira do Drive, "Excluir dados
+/// ocultos do app") ou voltou a uma versão anterior. Nada nesse remoto é mais novo que a nossa
+/// base — não há o que disputar — então publicar é sempre seguro e é o único jeito de restaurar
+/// o que se perdeu, mesmo quando o local também não tem mudança nova.
 pub fn decide(local: i64, base: i64, remote: Option<&SnapshotManifest>) -> LeaseVerdict {
     let remote_seq = remote.map(|m| m.sequence).unwrap_or(0);
+    if remote_seq < base {
+        return LeaseVerdict::Push;
+    }
     let local_advanced = local > base;
     let remote_advanced = remote_seq > base;
     match (local_advanced, remote_advanced) {
@@ -106,6 +115,41 @@ mod tests {
                 Some(manifest("device-qualquer", 5)),
                 LeaseVerdict::UpToDate,
             ),
+            // Remoto AUSENTE com base > 0: o dono publicou antes, mas o manifest sumiu (lixeira
+            // do Drive, "Excluir dados ocultos do app"). Local na própria base — mesmo sem
+            // mudança nova, republicar é o único jeito de restaurar o que se perdeu.
+            (
+                "remoto ausente com base > 0, local na base",
+                7,
+                7,
+                None,
+                LeaseVerdict::Push,
+            ),
+            // Mesma classe, mas com manifest velho em vez de ausente: remoto regrediu abaixo
+            // da nossa base (sequência 3 < base 7).
+            (
+                "remoto regrediu abaixo da base, local na base",
+                7,
+                7,
+                Some(manifest("outro-aparelho", 3)),
+                LeaseVerdict::Push,
+            ),
+            // Remoto ausente/regredido E local também avançou: publicar continua seguro — nada
+            // no remoto é mais novo que a base para disputar.
+            (
+                "remoto ausente com base > 0, local também avançou",
+                8,
+                7,
+                None,
+                LeaseVerdict::Push,
+            ),
+            (
+                "remoto regrediu abaixo da base, local também avançou",
+                8,
+                7,
+                Some(manifest("outro-aparelho", 3)),
+                LeaseVerdict::Push,
+            ),
         ] {
             assert_eq!(
                 decide(local, base, remote.as_ref()),
@@ -118,7 +162,10 @@ mod tests {
     #[test]
     fn local_behind_base_is_treated_as_not_advanced_never_panics() {
         // Não deveria surgir na prática (base é sempre <= local), mas o árbitro é total.
-        assert_eq!(decide(3, 5, None), LeaseVerdict::UpToDate);
+        // Mesmo neste caso defensivo, um remoto ausente/regredido ainda vale Push: nada lá em
+        // cima é mais novo que a base, então publicar nunca é destrutivo.
+        assert_eq!(decide(3, 5, None), LeaseVerdict::Push);
+        assert_eq!(decide(3, 5, Some(&manifest("d", 4))), LeaseVerdict::Push);
         assert_eq!(decide(3, 5, Some(&manifest("d", 6))), LeaseVerdict::Pull);
     }
 }

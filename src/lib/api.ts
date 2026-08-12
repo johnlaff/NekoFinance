@@ -1154,6 +1154,13 @@ export interface DriveCheckinInfo {
   this_device_id: string;
 }
 
+/** Resultado do gesto de check-in: além do estado (`info`), diz se este clique de fato subiu
+ *  algo novo. "Em dia" (`published: false`) é sucesso — nada mudou desde a última publicação,
+ *  não um erro (ADR-0015). */
+export interface DriveCheckinResult extends DriveCheckinInfo {
+  published: boolean;
+}
+
 export function lastDriveCheckin(): Promise<DriveCheckinInfo> {
   return invoke("last_drive_checkin");
 }
@@ -1163,7 +1170,7 @@ export function lastDriveCheckin(): Promise<DriveCheckinInfo> {
 export function driveCheckin(
   clientId: string,
   clientSecret?: string,
-): Promise<DriveCheckinInfo> {
+): Promise<DriveCheckinResult> {
   return invoke("drive_checkin", { clientId, clientSecret: clientSecret ?? null });
 }
 

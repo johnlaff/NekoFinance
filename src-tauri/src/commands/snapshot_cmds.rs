@@ -10,6 +10,16 @@ pub struct DriveCheckinInfo {
     pub this_device_id: String,
 }
 
+/// Resultado do gesto de check-in. "Em dia" (nada mudou desde a última publicação) é SUCESSO —
+/// o mesmo veredito do ADR-0015 —, mas a tela precisa distinguir dos dois para não anunciar uma
+/// publicação que não aconteceu: `published` diz se este clique de fato subiu algo novo.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DriveCheckinResult {
+    #[serde(flatten)]
+    pub info: DriveCheckinInfo,
+    pub published: bool,
+}
+
 #[tauri::command]
 pub async fn last_drive_checkin(pool: State<'_, SqlitePool>) -> Result<DriveCheckinInfo, String> {
     let st = state::load_or_init(pool.inner()).await?;
@@ -28,7 +38,7 @@ pub(crate) async fn drive_checkin_core(
     pool: &SqlitePool,
     app_dir: &std::path::Path,
     drive: &DriveSnapshotClient,
-) -> Result<DriveCheckinInfo, String> {
+) -> Result<DriveCheckinResult, String> {
     let local_state = state::load_or_init(pool).await?;
     let remote = drive.fetch_manifest().await?;
 
@@ -69,7 +79,16 @@ pub(crate) async fn drive_checkin_core(
     ) {
         lease::LeaseVerdict::Push => {}
         lease::LeaseVerdict::UpToDate => {
-            return Err("Nada para publicar: nenhuma mudança desde o último check-in.".into());
+            // Sucesso, não erro (ADR-0015): nada de novo para publicar. O estado local não
+            // muda — devolve exatamente o que já estava registrado.
+            return Ok(DriveCheckinResult {
+                info: DriveCheckinInfo {
+                    last_checkin_at: local_state.last_checkin_at,
+                    last_checkin_device_id: local_state.last_checkin_device_id,
+                    this_device_id: local_state.device_id,
+                },
+                published: false,
+            });
         }
         lease::LeaseVerdict::Pull | lease::LeaseVerdict::Conflict => {
             return Err(
@@ -108,10 +127,13 @@ pub(crate) async fn drive_checkin_core(
     )
     .await?;
 
-    Ok(DriveCheckinInfo {
-        last_checkin_at: Some(created_at),
-        last_checkin_device_id: Some(local_state.device_id.clone()),
-        this_device_id: local_state.device_id,
+    Ok(DriveCheckinResult {
+        info: DriveCheckinInfo {
+            last_checkin_at: Some(created_at),
+            last_checkin_device_id: Some(local_state.device_id.clone()),
+            this_device_id: local_state.device_id,
+        },
+        published: true,
     })
 }
 
@@ -125,7 +147,7 @@ pub async fn drive_checkin(
     guard: State<'_, std::sync::Arc<crate::sync_task::SyncGuard>>,
     client_id: String,
     client_secret: Option<String>,
-) -> Result<DriveCheckinInfo, String> {
+) -> Result<DriveCheckinResult, String> {
     let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
         oauth::token_store::ensure_drive_scope(&app_dir.0, &client_id, client_secret.as_deref())
@@ -201,13 +223,14 @@ mod tests {
             .await;
         let drive = DriveSnapshotClient::new(token(), server.url());
 
-        let info = drive_checkin_core(&pool, &app_dir, &drive)
+        let result = drive_checkin_core(&pool, &app_dir, &drive)
             .await
             .expect("primeiro check-in deve publicar (primeira subida)");
-        assert!(info.last_checkin_at.is_some());
+        assert!(result.published);
+        assert!(result.info.last_checkin_at.is_some());
         assert_eq!(
-            info.last_checkin_device_id,
-            Some(info.this_device_id.clone())
+            result.info.last_checkin_device_id,
+            Some(result.info.this_device_id.clone())
         );
 
         let state_after = state::load_or_init(&pool).await.unwrap();
@@ -288,10 +311,11 @@ mod tests {
             .await;
         let drive = DriveSnapshotClient::new(token(), server.url());
 
-        let info = drive_checkin_core(&pool, &app_dir, &drive)
+        let result = drive_checkin_core(&pool, &app_dir, &drive)
             .await
             .expect("subir de novo com o remoto na mesma base deve ser seguro");
-        assert!(info.last_checkin_at.is_some());
+        assert!(result.published);
+        assert!(result.info.last_checkin_at.is_some());
 
         let state_after = state::load_or_init(&pool).await.unwrap();
         assert_eq!(state_after.base_sequence, 2);
@@ -384,6 +408,7 @@ mod tests {
         let first = drive_checkin_core(&pool, &app_dir, &drive1)
             .await
             .expect("primeiro check-in deve publicar");
+        assert!(first.published);
         let state_after_first = state::load_or_init(&pool).await.unwrap();
         assert_eq!(state_after_first.base_sequence, 1);
 
@@ -395,7 +420,7 @@ mod tests {
         let manifest_json = serde_json::to_string(&SnapshotManifest {
             device_id: state_after_first.device_id.clone(),
             sequence: 1,
-            created_at: first.last_checkin_at.clone().unwrap(),
+            created_at: first.info.last_checkin_at.clone().unwrap(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             schema_version: 1,
         })
@@ -419,13 +444,16 @@ mod tests {
             .await;
         let drive2 = DriveSnapshotClient::new(token(), server2.url());
 
-        let err = drive_checkin_core(&pool, &app_dir, &drive2)
+        // "Em dia" é SUCESSO (ADR-0015), não erro: o segundo clique não publica de novo, mas
+        // também não deve virar mensagem de falha para o dono.
+        let second = drive_checkin_core(&pool, &app_dir, &drive2)
             .await
-            .expect_err("nada mudou desde o último check-in — deve recusar como 'em dia'");
+            .expect("nada mudou desde o último check-in — 'em dia' é sucesso, não erro");
         assert!(
-            err.contains("Nada para publicar"),
-            "mensagem deve explicar que já está em dia: {err}"
+            !second.published,
+            "clique redundante não deve reivindicar ter publicado algo novo"
         );
+        assert_eq!(second.info.last_checkin_at, first.info.last_checkin_at);
 
         // Sequência intocada: um clique redundante nunca avança a base sem mudança real.
         let state_after_second = state::load_or_init(&pool).await.unwrap();

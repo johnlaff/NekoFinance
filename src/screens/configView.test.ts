@@ -104,9 +104,11 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
   });
 
   it("check-in feito por este aparelho", () => {
+    // `last_checkin_at` vem de `chrono::Utc::now().to_rfc3339()` (snapshot_cmds.rs) — RFC3339
+    // com offset explícito, nunca o formato "YYYY-MM-DD HH:MM:SS" do sync_log.
     const label = driveCheckinLabel(
       {
-        last_checkin_at: "2026-08-11 14:55:00",
+        last_checkin_at: "2026-08-11T14:55:00+00:00",
         last_checkin_device_id: "device-a",
         this_device_id: "device-a",
       },
@@ -118,7 +120,7 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
   it("check-in feito por OUTRO aparelho (identifica pelo id curto)", () => {
     const label = driveCheckinLabel(
       {
-        last_checkin_at: "2026-08-11 13:00:00",
+        last_checkin_at: "2026-08-11T13:00:00+00:00",
         last_checkin_device_id: "device-bbbbbbbb-cccc",
         this_device_id: "device-a",
       },

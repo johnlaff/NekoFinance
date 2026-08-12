@@ -50,7 +50,9 @@ import { fetchDailyBudget } from "./tetoView";
 import {
   backupDatabaseCmd,
   driveCheckinCmd,
+  driveCheckinErrorMessage,
   driveCheckinLabel,
+  DRIVE_CHECKIN_UP_TO_DATE_NOTE,
   fetchAppInfo,
   fetchConfigSetting,
   fetchLastDriveCheckin,
@@ -841,16 +843,21 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
   const { data: info } = useCommand("last_drive_checkin", fetchLastDriveCheckin);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
 
   async function doCheckin() {
     if (!GOOGLE_CLIENT_ID) return;
     setErr(null);
+    setNote(null);
     setNeedsReauth(false);
     setBusy(true);
     try {
-      await driveCheckinCmd(GOOGLE_CLIENT_ID);
+      const result = await driveCheckinCmd(GOOGLE_CLIENT_ID);
       setBusy(false);
+      // "Em dia" é sucesso (ADR-0015): nada foi publicado, mas o dono merece saber que o
+      // clique não falhou — só não tinha nada de novo para subir.
+      if (!result.published) setNote(DRIVE_CHECKIN_UP_TO_DATE_NOTE);
       invalidateCommands();
     } catch (e) {
       setBusy(false);
@@ -858,7 +865,7 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
       if (errorText(e) === NEEDS_DRIVE_REAUTH) {
         setNeedsReauth(true);
       } else {
-        setErr(safeErrorMessage(e, "Não foi possível fazer o check-in."));
+        setErr(driveCheckinErrorMessage(e));
       }
     }
   }
@@ -875,6 +882,8 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
             <strong role="alert" className="config__err">
               {err}
             </strong>
+          ) : note ? (
+            <span className="config__what-s">{note}</span>
           ) : null}
         </>
       }

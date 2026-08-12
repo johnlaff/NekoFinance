@@ -16,17 +16,41 @@ import {
   type AppInfo,
   type AuthStatus,
   type DriveCheckinInfo,
+  type DriveCheckinResult,
   type MiaConsentView,
 } from "../lib/api";
+import { errorText, safeErrorMessage } from "../lib/errors";
 import { syncRecencyLabel } from "../lib/syncRecency";
 
-export type { AppInfo, AuthStatus, DriveCheckinInfo, MiaConsentView };
+export type {
+  AppInfo,
+  AuthStatus,
+  DriveCheckinInfo,
+  DriveCheckinResult,
+  MiaConsentView,
+};
 
 /** Mensagem exata devolvida pelo backend (`oauth::token_store::NEEDS_DRIVE_REAUTH`) quando o
  *  token não tem o escopo `drive.appdata` — casada por igualdade para levar ao fluxo de
  *  reconexão, nunca a um erro cru. Precisa ficar em sincronia com a constante Rust. */
 export const NEEDS_DRIVE_REAUTH =
   "Re-autorize para habilitar o snapshot no Drive: sua conexão atual não tem esse escopo.";
+
+/** Copy calma para o veredito "em dia" do check-in — sucesso (ADR-0015), nunca erro: nada mudou
+ *  desde a última publicação. */
+export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
+  "Já está em dia — nada novo para publicar.";
+
+/** Mensagem exata da recusa do lease (force-with-lease) quando outro aparelho publicou depois
+ *  da nossa base — casada por regex para mostrar verbatim; qualquer outro erro (rede, OAuth,
+ *  exportação) cai no fallback genérico de `safeErrorMessage`. */
+const LEASE_REFUSAL_RE = /outro aparelho publicou depois do seu último check-in/i;
+
+export function driveCheckinErrorMessage(error: unknown): string {
+  const raw = errorText(error).trim();
+  if (LEASE_REFUSAL_RE.test(raw)) return raw;
+  return safeErrorMessage(error, "Não foi possível fazer o check-in.");
+}
 
 export type GreetTone = "ok" | "warn" | "muted";
 
@@ -151,7 +175,7 @@ export function backupDatabaseCmd(destPath: string): Promise<string> {
 export function driveCheckinCmd(
   clientId: string,
   clientSecret?: string,
-): Promise<DriveCheckinInfo> {
+): Promise<DriveCheckinResult> {
   return driveCheckin(clientId, clientSecret);
 }
 
