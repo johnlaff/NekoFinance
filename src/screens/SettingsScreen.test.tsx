@@ -11,6 +11,8 @@ import { appCacheDir, join } from "@tauri-apps/api/path";
 import type * as ConfigView from "./configView";
 import type * as Env from "../lib/env";
 import {
+  CHECKIN_REFUSED_CONFLICT,
+  CHECKIN_REFUSED_PULL,
   fetchMiaConsent,
   grantMiaConsentCmd,
   revokeMiaConsentCmd,
@@ -598,7 +600,7 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
     mockInvoke.mockReset();
   });
 
-  it("mostra a recusa do lease VERBATIM, não o erro genérico", async () => {
+  it("Pull: mostra a recusa VERBATIM, sem instruir um gesto que a fatia não tem", async () => {
     const user = userEvent.setup();
     mockCommands({
       get_app_info: APP_INFO,
@@ -607,22 +609,34 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
         last_checkin_device_id: null,
         this_device_id: "aparelho-a",
       },
-      drive_checkin: new Error(
-        "Outro aparelho publicou depois do seu último check-in. Baixe a versão mais recente antes de subir a sua.",
-      ),
+      drive_checkin: new Error(CHECKIN_REFUSED_PULL),
     });
     renderSettings();
 
     await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
 
-    expect(
-      await screen.findByText(
-        "Outro aparelho publicou depois do seu último check-in. Baixe a versão mais recente antes de subir a sua.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(CHECKIN_REFUSED_PULL)).toBeInTheDocument();
   });
 
-  it("'em dia' é sucesso: copy calma, nunca role=alert", async () => {
+  it("Conflict: mostra a recusa VERBATIM, sem sugerir descartar trabalho local", async () => {
+    const user = userEvent.setup();
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        this_device_id: "aparelho-a",
+      },
+      drive_checkin: new Error(CHECKIN_REFUSED_CONFLICT),
+    });
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
+
+    expect(await screen.findByText(CHECKIN_REFUSED_CONFLICT)).toBeInTheDocument();
+  });
+
+  it("'em dia' é sucesso: copy calma, anunciada por role=status, nunca role=alert", async () => {
     const user = userEvent.setup();
     mockCommands({
       get_app_info: APP_INFO,
@@ -643,8 +657,10 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
     await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
 
     const note = await screen.findByText("Já está em dia — nada novo para publicar.");
-    // "Em dia" é o caso normal, não uma falha: a copy não pode viver dentro de uma região
-    // role="alert" (regra 16 de docs/ui-standards.md).
+    // "Em dia" é o caso normal, não uma falha: precisa ser ANUNCIADO ao leitor de tela (o
+    // rótulo do botão não muda, então sem role="status" o clique some em silêncio), mas nunca
+    // dentro de uma região role="alert" (regra 16 de docs/ui-standards.md).
+    expect(note.closest('[role="status"]')).not.toBeNull();
     expect(note.closest('[role="alert"]')).toBeNull();
   });
 

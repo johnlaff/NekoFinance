@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { driveCheckinLabel, greetState } from "./configView";
+import {
+  CHECKIN_REFUSED_CONFLICT,
+  CHECKIN_REFUSED_PREFIX,
+  CHECKIN_REFUSED_PULL,
+  driveCheckinErrorMessage,
+  driveCheckinLabel,
+  greetState,
+} from "./configView";
 
 describe("greetState — pílula de estado do veredito", () => {
   it("verificando conexão", () => {
@@ -127,5 +134,47 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
       now,
     );
     expect(label).toBe("Último check-in há 2 h, por outro aparelho (device-b).");
+  });
+});
+
+describe("driveCheckinErrorMessage — recusa do lease", () => {
+  // Fixtures iguais, caractere por caractere, aos literais Rust `CHECKIN_REFUSED_PULL` /
+  // `CHECKIN_REFUSED_CONFLICT` (`src-tauri/src/commands/snapshot_cmds.rs`) — mudar um lado sem
+  // atualizar o outro quebra este teste, em vez de deixar a suíte inteira verde com o
+  // reconhecimento fora de sincronia com a produção.
+  const RUST_CHECKIN_REFUSED_PULL =
+    "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
+    "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+  const RUST_CHECKIN_REFUSED_CONFLICT =
+    "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os " +
+    "aparelhos.";
+
+  it("as constantes TS casam com o literal do contrato Rust", () => {
+    expect(CHECKIN_REFUSED_PULL).toBe(RUST_CHECKIN_REFUSED_PULL);
+    expect(CHECKIN_REFUSED_CONFLICT).toBe(RUST_CHECKIN_REFUSED_CONFLICT);
+  });
+
+  it("reconhece a recusa por PREFIXO estrutural — não por regex sobre as palavras da frase", () => {
+    // Uma frase descritiva nunca antes vista, mas com o prefixo do contrato: reconhecida.
+    const futureCopy = `${CHECKIN_REFUSED_PREFIX}uma explicação nova, ainda não escrita hoje.`;
+    expect(driveCheckinErrorMessage(new Error(futureCopy))).toBe(futureCopy);
+  });
+
+  it("Pull: mostra a mensagem verbatim", () => {
+    expect(driveCheckinErrorMessage(new Error(CHECKIN_REFUSED_PULL))).toBe(
+      CHECKIN_REFUSED_PULL,
+    );
+  });
+
+  it("Conflict: mostra a mensagem verbatim", () => {
+    expect(driveCheckinErrorMessage(new Error(CHECKIN_REFUSED_CONFLICT))).toBe(
+      CHECKIN_REFUSED_CONFLICT,
+    );
+  });
+
+  it("erro sem o prefixo do contrato cai no fallback genérico", () => {
+    expect(driveCheckinErrorMessage(new Error("falha de rede qualquer"))).toBe(
+      "Não foi possível fazer o check-in.",
+    );
   });
 });

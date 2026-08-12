@@ -7,7 +7,16 @@ export function syncRecencyLabel(
   now: number = Date.now(),
 ): string | null {
   if (!ts) return null;
-  const iso = ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`;
+  let iso: string;
+  if (ts.includes("T")) {
+    // RFC3339 (chrono::Utc::now().to_rfc3339()) sempre carrega "Z" ou um offset explícito. Sem
+    // um dos dois, o texto não é uma forma que algum produtor gera — aceitá-lo aqui leria a
+    // hora como LOCAL do navegador e devolveria uma recência errada-mas-plausível.
+    if (!/(Z|[+-]\d{2}:?\d{2})$/.test(ts)) return null;
+    iso = ts;
+  } else {
+    iso = `${ts.replace(" ", "T")}Z`;
+  }
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return null;
   const min = Math.max(0, Math.floor((now - then) / 60000));

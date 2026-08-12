@@ -883,7 +883,12 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
               {err}
             </strong>
           ) : note ? (
-            <span className="config__what-s">{note}</span>
+            // "Em dia" é sucesso (ADR-0015), não erro: role="status" anuncia o clique ao leitor
+            // de tela mesmo com o rótulo do botão inalterado; classe própria separa
+            // visualmente da linha do rótulo em vez de herdar `.config__what-s` de dentro dela.
+            <span role="status" className="config__note">
+              {note}
+            </span>
           ) : null}
         </>
       }

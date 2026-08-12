@@ -2,6 +2,25 @@ use super::*;
 use crate::snapshot::{lease, manifest::SnapshotManifest, state, transport::DriveSnapshotClient};
 use sha2::{Digest, Sha256};
 
+/// As duas frases da recusa do check-in começam pelo mesmo prefixo ("Check-in recusado: ") de
+/// PROPÓSITO: o frontend reconhece a recusa por esse prefixo ESTRUTURAL
+/// (`CHECKIN_REFUSED_PREFIX` em `src/screens/configView.ts`), nunca por regex sobre as palavras
+/// da frase descritiva que segue — mudar a explicação depois do prefixo não quebra o
+/// reconhecimento em produção. Mudar o PREFIXO em si é mudança de contrato: atualize os dois
+/// lados juntos, no mesmo commit (o teste `checkin_refusal_messages_share_the_stable_contract_prefix`
+/// trava essa invariante deste lado).
+///
+/// Veredito `Pull`: outro aparelho publicou depois do nosso último check-in. Esta fatia (issue
+/// #423) ainda não tem check-out/pull/restore — chega em fatia futura da spec 043 — então a
+/// copy nunca instrui um gesto ("baixe") que o app ainda não oferece.
+pub const CHECKIN_REFUSED_PULL: &str = "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura \
+     dessa versão ainda não chegou a este app — chega numa atualização futura.";
+
+/// Veredito `Conflict`: os dois lados avançaram a partir da mesma base. Nunca dizer "baixe" —
+/// aqui isso significaria descartar o trabalho local sem aviso.
+pub const CHECKIN_REFUSED_CONFLICT: &str = "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os \
+     aparelhos.";
+
 /// O que a UI de Conexão mostra sobre o último check-in — quando e por qual aparelho.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DriveCheckinInfo {
@@ -90,13 +109,11 @@ pub(crate) async fn drive_checkin_core(
                 published: false,
             });
         }
-        lease::LeaseVerdict::Pull | lease::LeaseVerdict::Conflict => {
-            return Err(
-                "Outro aparelho publicou depois do seu último check-in. Baixe a versão mais \
-                 recente antes de subir a sua."
-                    .into(),
-            );
-        }
+        // Pull e Conflict têm copy PRÓPRIA: Pull não instrui "baixe" (esta fatia não tem
+        // check-out/pull/restore ainda) e Conflict não sugere um gesto que descartaria trabalho
+        // local sem aviso.
+        lease::LeaseVerdict::Pull => return Err(CHECKIN_REFUSED_PULL.into()),
+        lease::LeaseVerdict::Conflict => return Err(CHECKIN_REFUSED_CONFLICT.into()),
     }
 
     let schema_version: i64 =
@@ -163,6 +180,17 @@ pub async fn drive_checkin(
 mod tests {
     use super::*;
     use crate::oauth::token_store::StoredToken;
+
+    #[test]
+    fn checkin_refusal_messages_share_the_stable_contract_prefix() {
+        // Espelha `CHECKIN_REFUSED_PREFIX` de `src/screens/configView.ts`, onde o frontend
+        // reconhece a recusa do lease por este prefixo ESTRUTURAL — nunca por regex sobre as
+        // palavras da frase descritiva. Se um dos dois textos deixar de começar por ele, o
+        // reconhecimento quebra em produção mesmo com a suíte inteira verde.
+        const CHECKIN_REFUSED_PREFIX: &str = "Check-in recusado: ";
+        assert!(CHECKIN_REFUSED_PULL.starts_with(CHECKIN_REFUSED_PREFIX));
+        assert!(CHECKIN_REFUSED_CONFLICT.starts_with(CHECKIN_REFUSED_PREFIX));
+    }
 
     // `VACUUM INTO` exige um banco de ORIGEM em arquivo — a partir de `:memory:` ele não
     // materializa o destino (mesma observação já documentada no teste do backup, `commands::mod`).
@@ -324,7 +352,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkin_refuses_to_push_when_remote_advanced_past_local_base() {
+    async fn checkin_refuses_with_conflict_message_when_both_sides_advanced_from_same_base() {
         let app_dir = test_app_dir();
         let pool = test_pool(&app_dir).await;
         let local = state::load_or_init(&pool).await.unwrap();
@@ -339,8 +367,9 @@ mod tests {
         .unwrap();
 
         let mut server = mockito::Server::new_async().await;
-        // Remoto avançou para 5 (outro aparelho publicou) enquanto nossa base ainda é 1 —
-        // force-with-lease deve recusar a subida.
+        // Remoto avançou para 5 (outro aparelho publicou) enquanto nossa base ainda é 1, E o
+        // conteúdo local mudou desde a base (o hash semeado acima não bate com o export real) —
+        // os dois lados avançaram a partir da mesma base: Conflict, não Pull.
         let manifest_json = serde_json::to_string(&SnapshotManifest {
             device_id: "outro-aparelho".into(),
             sequence: 5,
@@ -371,12 +400,81 @@ mod tests {
         let err = drive_checkin_core(&pool, &app_dir, &drive)
             .await
             .expect_err("deve recusar publicar por cima do avanço do outro aparelho");
-        assert!(
-            err.contains("Outro aparelho"),
-            "mensagem deve explicar a recusa: {err}"
-        );
+        // Conflito nunca instrui "baixe" — aqui significaria descartar trabalho local sem aviso.
+        assert_eq!(err, CHECKIN_REFUSED_CONFLICT);
 
         // Estado local intocado: a base continua 1, nenhuma sequência foi reivindicada em vão.
+        let state_after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 1);
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checkin_refuses_with_pull_message_when_remote_advanced_and_local_unchanged() {
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+
+        // Primeiro check-in: publica a sequência 1 (primeira subida).
+        let mut server1 = mockito::Server::new_async().await;
+        server1
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        server1
+            .mock("POST", "/upload/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"id": "created"}"#)
+            .create_async()
+            .await;
+        let drive1 = DriveSnapshotClient::new(token(), server1.url());
+        let first = drive_checkin_core(&pool, &app_dir, &drive1)
+            .await
+            .expect("primeiro check-in deve publicar");
+        assert!(first.published);
+
+        // Nenhuma escrita no banco depois disso: o próximo export teria o MESMO conteúdo. Mas
+        // outro aparelho publicou por cima (sequência 2) — o remoto avançou sem que este
+        // aparelho tivesse mudança própria para reivindicar: Pull, nunca Conflict.
+        let mut server2 = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 2,
+            created_at: "2026-08-11T12:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server2
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server2
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        let drive2 = DriveSnapshotClient::new(token(), server2.url());
+
+        let err = drive_checkin_core(&pool, &app_dir, &drive2)
+            .await
+            .expect_err("deve recusar com o veredito Pull, sem instruir gesto inexistente");
+        // Esta fatia (issue #423) não tem check-out/pull/restore — a copy nunca instrui "baixe".
+        assert_eq!(err, CHECKIN_REFUSED_PULL);
+
+        // Estado local intocado: a base continua 1.
         let state_after = state::load_or_init(&pool).await.unwrap();
         assert_eq!(state_after.base_sequence, 1);
 

@@ -41,14 +41,29 @@ export const NEEDS_DRIVE_REAUTH =
 export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
   "Já está em dia — nada novo para publicar.";
 
-/** Mensagem exata da recusa do lease (force-with-lease) quando outro aparelho publicou depois
- *  da nossa base — casada por regex para mostrar verbatim; qualquer outro erro (rede, OAuth,
- *  exportação) cai no fallback genérico de `safeErrorMessage`. */
-const LEASE_REFUSAL_RE = /outro aparelho publicou depois do seu último check-in/i;
+/** Prefixo estável do contrato de recusa do check-in — `snapshot_cmds::CHECKIN_REFUSED_PULL` e
+ *  `CHECKIN_REFUSED_CONFLICT` (Rust) sempre começam por ele. A recusa é reconhecida por este
+ *  prefixo ESTRUTURAL, nunca por regex sobre as palavras da frase descritiva que segue (que
+ *  muda mais fácil que o contrato). Mudar este literal é mudança de contrato: atualize os dois
+ *  lados juntos, no mesmo commit. */
+export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
+
+/** Mensagem exata do veredito `Pull` (`snapshot_cmds::CHECKIN_REFUSED_PULL`) — fonte única para
+ *  os testes, em vez de um literal hardcoded solto. Esta fatia (issue #423) não tem
+ *  check-out/pull/restore ainda, então a copy nunca instrui "baixe". */
+export const CHECKIN_REFUSED_PULL =
+  "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
+  "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+
+/** Mensagem exata do veredito `Conflict` (`snapshot_cmds::CHECKIN_REFUSED_CONFLICT`). Nunca diz
+ *  "baixe" — aqui significaria descartar trabalho local sem aviso. */
+export const CHECKIN_REFUSED_CONFLICT =
+  "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os " +
+  "aparelhos.";
 
 export function driveCheckinErrorMessage(error: unknown): string {
   const raw = errorText(error).trim();
-  if (LEASE_REFUSAL_RE.test(raw)) return raw;
+  if (raw.startsWith(CHECKIN_REFUSED_PREFIX)) return raw;
   return safeErrorMessage(error, "Não foi possível fazer o check-in.");
 }
 

@@ -19,6 +19,10 @@ existente); um manifest de sequência monotônica por aparelho decide quem pode 
   dia, puxar, subir, conflito. Shell e UI só obedecem; nenhuma regra de posse mora fora dela.
 - **Force-with-lease**: subir é recusado sempre que o remoto avançou desde a base local — a
   mesma semântica do `git push --force-with-lease`. Ninguém sobrescreve o outro em silêncio.
+- **Remoto ausente ou regredido republica**: sem manifest publicado, ou com sequência remota
+  abaixo da base local, nada lá é mais novo para disputar — o veredito é `Push`, mesmo sem
+  mudança local nova. É o único jeito de restaurar o que a lixeira do Drive ("Excluir dados
+  ocultos do app") ou uma reversão manual apagou.
 - **Conflito nunca funde**: quando os dois aparelhos avançaram a partir da mesma base, o dono
   escolhe o vencedor manualmente, vendo a lista de gestos do lado perdedor (lida do `sync_log`).
 - O transporte fica atrás do `appDataFolder` do Drive — invisível ao dono, escopo OAuth estreito
