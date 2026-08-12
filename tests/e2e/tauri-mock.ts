@@ -1021,5 +1021,15 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       },
       configurable: true,
     });
+
+    // `@tauri-apps/plugin-os` lê este global de forma síncrona (sem passar por `invoke`) — o
+    // Tauri real injeta antes de qualquer JS do front rodar, e `lib/env.ts` chama `platform()`
+    // sem guarda além do `isTauri`. Espelha o desktop mockado em src/test/setup.ts; o
+    // comportamento Android de `isAndroid` já tem cobertura própria nos testes unitários
+    // (`vi.mock` de `lib/env`), sem cenário equivalente nas capturas visuais.
+    Object.defineProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__", {
+      value: { platform: "linux" },
+      configurable: true,
+    });
   }, overrides);
 }

@@ -8,8 +8,9 @@ Object.defineProperty(window, "__TAURI_INTERNALS__", {
 });
 
 // `@tauri-apps/plugin-os` reads this global synchronously (no `invoke` round trip) — real Tauri
-// injects it before any frontend JS runs, so `lib/env.ts` calls `platform()` unguarded. Desktop is
-// the default here; `vi.mock("../../lib/env", ...)` is how individual tests fake Android.
+// injects it before any frontend JS runs, and `lib/env.ts` guards on its presence before calling
+// `platform()`. Desktop is the default here; `vi.mock("../../lib/env", ...)` is how individual
+// tests fake Android.
 Object.defineProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__", {
   value: { platform: "linux" },
   writable: true,
