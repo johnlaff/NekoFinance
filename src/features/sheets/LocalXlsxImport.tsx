@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, FileUp, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { appCacheDir, join } from "@tauri-apps/api/path";
 import { Button } from "../../design-system/components/Button";
 import { isTauri } from "../../lib/env";
 import { safeErrorMessage } from "../../lib/errors";
@@ -8,6 +10,20 @@ import { invalidateCommands } from "../../lib/useCommand";
 import { withLoading } from "../../lib/withLoading";
 import { ImportDiagnosticsNotice } from "./GoogleSheetsPanel";
 import { importLocalXlsxCmd, type ImportDiagnostic } from "./sheetsView";
+
+/**
+ * O picker do `dialog` devolve um `content://` no Android — sem caminho de filesystem real,
+ * o que o comando Rust (que lê o arquivo direto com `std::fs`) não consegue abrir. Materializar
+ * os bytes num arquivo próprio do app antes de invocar resolve as duas plataformas pelo mesmo
+ * caminho: em desktop o picker já devolve um caminho real, então a cópia é redundante mas
+ * inofensiva (planilhas são pequenas).
+ */
+async function materializeLocalPath(pickedPath: string): Promise<string> {
+  const [bytes, cacheDir] = await Promise.all([readFile(pickedPath), appCacheDir()]);
+  const dest = await join(cacheDir, "neko-local-import.xlsx");
+  await writeFile(dest, bytes);
+  return dest;
+}
 
 /**
  * Imports a local .xlsx copy of the spreadsheet through a native file dialog.
@@ -32,7 +48,7 @@ export function LocalXlsxImport() {
         filters: [{ name: "Planilha", extensions: ["xlsx"] }],
       });
       if (typeof selected !== "string") return; // dialog dismissed
-      file = selected;
+      file = await materializeLocalPath(selected);
     } catch (e) {
       setError(safeErrorMessage(e, "Não foi possível selecionar o arquivo."));
       return;

@@ -6,6 +6,8 @@ import { NekoAppProvider } from "../shell/appContext";
 import { APP_INFO, POCKETS, mockCommands, mockInvoke } from "../test/commands";
 import { invalidateCommands } from "../lib/useCommand";
 import { open } from "@tauri-apps/plugin-dialog";
+import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+import { appCacheDir, join } from "@tauri-apps/api/path";
 import type * as ConfigView from "./configView";
 import type * as Env from "../lib/env";
 import {
@@ -29,6 +31,16 @@ vi.mock("../lib/env", async (importOriginal) => ({
   GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
 }));
 
+vi.mock("@tauri-apps/plugin-fs", () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/path", () => ({
+  appCacheDir: vi.fn(),
+  join: vi.fn(),
+}));
+
 vi.mock("./configView", async (importOriginal) => {
   const actual = await importOriginal<typeof ConfigView>();
   return {
@@ -45,6 +57,10 @@ const mockGetMiaConsent = fetchMiaConsent as ReturnType<typeof vi.fn>;
 const mockGrantMiaConsent = grantMiaConsentCmd as ReturnType<typeof vi.fn>;
 const mockRevokeMiaConsent = revokeMiaConsentCmd as ReturnType<typeof vi.fn>;
 const mockSetMiaApiKey = setMiaApiKeyCmd as ReturnType<typeof vi.fn>;
+const mockReadFile = readFile as ReturnType<typeof vi.fn>;
+const mockWriteFile = writeFile as ReturnType<typeof vi.fn>;
+const mockAppCacheDir = appCacheDir as ReturnType<typeof vi.fn>;
+const mockJoin = join as ReturnType<typeof vi.fn>;
 
 const CONSENT_TEXT = {
   headline: "Autorizar a conversa aberta",
@@ -99,6 +115,10 @@ describe("SettingsScreen", () => {
     mockRevokeMiaConsent.mockReset();
     mockSetMiaApiKey.mockReset();
     mockGetMiaConsent.mockResolvedValue(consent());
+    mockReadFile.mockReset().mockResolvedValue(new Uint8Array());
+    mockWriteFile.mockReset().mockResolvedValue(undefined);
+    mockAppCacheDir.mockReset().mockResolvedValue("/cache");
+    mockJoin.mockReset().mockResolvedValue("/cache/neko-local-import.xlsx");
   });
 
   it("mostra a conversa desligada e revela os processadores e opt-ins ao ligar", async () => {

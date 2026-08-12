@@ -596,6 +596,11 @@
     align-items: center;
     justify-content: center;
     gap: 1px;
+    /* A linha de 52px do celular é mais baixa que o mínimo de 76px do desktop
+       (herdado da regra base): sem zerar, a célula estica além da própria
+       track do grid e a última semana — sem vizinha por baixo para cobrir o
+       vazamento — pinta por cima do bloco do dia selecionado. */
+    min-height: 0;
   }
 
   .calendario__cell--out {

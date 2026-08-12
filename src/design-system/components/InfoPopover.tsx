@@ -168,7 +168,13 @@ export function InfoPopover({
           >
             {entry.title ? <span className="nk-pop__title">{entry.title}</span> : null}
             <span className="nk-pop__body">{entry.body}</span>
-            <span className="nk-pop__hint">Esc para fechar</span>
+            {/* As duas variantes vivem no DOM; o CSS (media hover/pointer) escolhe qual
+                aparece — Esc não existe em toque, e texto divergente por JS aqui violaria
+                a regra de copy por ambiente do design system. */}
+            <span className="nk-pop__hint">
+              <span className="nk-pop__hint--touch">Toque fora para fechar</span>
+              <span className="nk-pop__hint--keys">Esc para fechar</span>
+            </span>
           </span>,
           document.body,
         )}

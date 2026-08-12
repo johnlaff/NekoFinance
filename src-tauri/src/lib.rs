@@ -23,6 +23,7 @@ mod recurrence;
 mod reminder_task;
 mod scenarios;
 mod secret_file;
+mod secret_vault;
 mod snapshot;
 mod splits;
 mod sync_task;
@@ -39,6 +40,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![

@@ -680,6 +680,10 @@
 .cmp-date-col {
   width: 160px;
 }
+.cmp-desc-col {
+  flex: 1;
+  min-width: 0;
+}
 /* Valor section header row (label + mode switch) */
 .cmp-valor-row {
   display: flex;
@@ -918,6 +922,44 @@
   color: var(--text);
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+/* O drawer de desktop encosta lado a lado sem sobra de largura para pensar em
+   recorte/gestos; no celular ele vira folha ancorada na base — mesma gramática
+   do `.lc-sheet` — e respeita as duas safe areas em vez de herdar `top: 0`. */
+@media (max-width: 700px) {
+  .cmp {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 16px);
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    transform: translateY(102%);
+  }
+  .cmp.is-open {
+    transform: translateY(0);
+  }
+  .cmp-body {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .cmp-foot {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  /* Data + Descrição espremiam 160px fixos contra o resto: empilhado, cada
+     campo recebe a largura inteira e o placeholder para de cortar no meio. */
+  .cmp-date-desc-row {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .cmp-date-col {
+    width: 100%;
+  }
 }
 
 /* ============================================================
