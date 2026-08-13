@@ -22,6 +22,11 @@ pub enum CheckoutOutcome {
         local_schema: i64,
         remote_schema: i64,
     },
+    /// O manifest remoto carrega o NOSSO PRÓPRIO `device_id` — um check-in que morreu entre o
+    /// upload confirmado e a gravação do estado local (ADR-0015). O conteúdo já é
+    /// nosso; restaurar de verdade descartaria qualquer trabalho feito depois daquele upload, então
+    /// só a sequência-base local avança para alcançar o remoto, sem baixar nem trocar arquivo.
+    CaughtUpOwnSequence { sequence: i64 },
 }
 
 /// Pool sempre utilizável + o que aconteceu. `outcome: Err(_)` é um problema NÃO-FATAL (rede,
@@ -113,6 +118,27 @@ pub async fn checkout_on_open(
     let remote_manifest =
         remote.expect("veredito Pull do árbitro implica manifest remoto presente");
 
+    // O remoto avançou, mas com a NOSSA PRÓPRIA identidade: publicamos aquele conteúdo nós
+    // mesmos — o check-in que fez o upload confirmar morreu antes de gravar a base local (queda
+    // de rede/processo entre as duas etapas). Restaurar de verdade baixaria e trocaria o banco
+    // ativo pelo NOSSO PRÓPRIO snapshot antigo, descartando qualquer gesto feito depois daquele
+    // upload — o conteúdo já é nosso, só a base local está atrasada. Nunca baixa nem troca
+    // arquivo neste ramo: só alcança a sequência remota.
+    if remote_manifest.device_id == local_state.device_id {
+        return match state::adopt_own_sequence(&pool, remote_manifest.sequence).await {
+            Ok(()) => Ok(CheckoutResult {
+                pool,
+                outcome: Ok(CheckoutOutcome::CaughtUpOwnSequence {
+                    sequence: remote_manifest.sequence,
+                }),
+            }),
+            Err(e) => Ok(CheckoutResult {
+                pool,
+                outcome: Err(e),
+            }),
+        };
+    }
+
     let local_schema = match local_schema_version(&pool).await {
         Ok(v) => v,
         Err(e) => {
@@ -159,14 +185,7 @@ pub async fn checkout_on_open(
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(format!("neko-checkout-{}.db", uuid::Uuid::new_v4()));
-    if let Err(e) = tokio::fs::write(&tmp_path, &db_bytes).await {
-        return Ok(CheckoutResult {
-            pool,
-            outcome: Err(format!("gravar snapshot baixado: {e}")),
-        });
-    }
-    if let Err(e) = restore::validate_downloaded_db(&tmp_path).await {
-        let _ = std::fs::remove_file(&tmp_path);
+    if let Err(e) = restore::stage_downloaded_snapshot(&tmp_path, &db_bytes).await {
         return Ok(CheckoutResult {
             pool,
             outcome: Err(e),
@@ -174,10 +193,14 @@ pub async fn checkout_on_open(
     }
 
     // Ponto de não-retorno: tudo que podia falhar por rede/integridade já rodou com `pool`
-    // intacto. A identidade DESTE aparelho precisa sobreviver à troca — capturada ANTES de
-    // fechar o pool antigo, porque o arquivo baixado chega com `snapshot_state` vazio (ver
-    // `state::strip_from_export_copy`, que roda do lado de quem publicou).
+    // intacto. A identidade DESTE aparelho E o histórico de check-in que ele já tinha precisam
+    // sobreviver à troca — capturados ANTES de fechar o pool antigo, porque o arquivo baixado
+    // chega com `snapshot_state` vazio (ver `state::strip_from_export_copy`, que roda do lado de
+    // quem publicou). Sem capturar o histórico de check-in aqui, um aparelho que já publicou
+    // perderia a própria linha do tempo a cada check-out.
     let device_id = local_state.device_id.clone();
+    let last_checkin_at = local_state.last_checkin_at.clone();
+    let last_checkin_device_id = local_state.last_checkin_device_id.clone();
     pool.close().await;
 
     let safeguard_path = match restore::swap_active_db_atomically(&tmp_path, db_path) {
@@ -218,6 +241,8 @@ pub async fn checkout_on_open(
         remote_manifest.sequence,
         &checked_out_at,
         &remote_manifest.device_id,
+        last_checkin_at.as_deref(),
+        last_checkin_device_id.as_deref(),
     )
     .await
     {
@@ -267,7 +292,46 @@ pub async fn checkout_on_open_best_effort(
         }
     };
     let drive = DriveSnapshotClient::new(token, super::transport::production_base_url());
-    checkout_on_open(pool, db_path, &drive).await
+    let result = checkout_on_open(pool, db_path, &drive).await?;
+
+    // Persiste o desfecho para a UI de Conexão (ADR-0015): a recusa por schema mais
+    // novo e a falha de rede/integridade merecem um aviso na tela, não só uma linha de log que o
+    // dono nunca vê. `NothingToDo`/`Restored`/`CaughtUpOwnSequence` são sucesso — limpam qualquer
+    // aviso de uma tentativa ANTERIOR, para ele não sobreviver a um check-out que deu certo depois.
+    // Melhor esforço: uma falha ao GRAVAR o desfecho não pode derrubar o check-out em si, que já
+    // rodou até aqui — só loga e segue com o `pool` que `checkout_on_open` devolveu.
+    let (outcome_tag, outcome_detail) = outcome_warning_fields(&result.outcome);
+    if let Err(e) = state::record_checkout_outcome(
+        &result.pool,
+        outcome_tag.as_deref(),
+        outcome_detail.as_deref(),
+    )
+    .await
+    {
+        eprintln!("[snapshot/checkout] falha ao registrar o desfecho para a UI: {e}");
+    }
+
+    Ok(result)
+}
+
+/// Mapeia o desfecho do check-out para o rótulo fechado que `snapshot_state.last_checkout_outcome`
+/// grava — só os dois casos que a UI de Conexão precisa avisar (`CHECKIN`/`RefusedNewerSchema` tem
+/// copy própria já visível; `NothingToDo`/`Restored`/`CaughtUpOwnSequence` não precisam de aviso,
+/// então limpam qualquer um pendente de uma tentativa anterior). Função pura, testável sem rede.
+fn outcome_warning_fields(
+    outcome: &Result<CheckoutOutcome, String>,
+) -> (Option<String>, Option<String>) {
+    match outcome {
+        Ok(CheckoutOutcome::RefusedNewerSchema {
+            local_schema,
+            remote_schema,
+        }) => (
+            Some("refused_newer_schema".to_string()),
+            Some(format!("{local_schema}:{remote_schema}")),
+        ),
+        Err(e) => (Some("error".to_string()), Some(e.clone())),
+        Ok(_) => (None, None),
+    }
 }
 
 #[cfg(test)]
@@ -622,6 +686,348 @@ mod tests {
             .await
             .expect("best-effort nunca falha quando não há como tentar");
         assert_eq!(result.outcome, Ok(CheckoutOutcome::NothingToDo));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Defeito 1: histórico de check-in sobrevive à troca (regressão de ponta a ponta) -------
+
+    #[tokio::test]
+    async fn restore_preserves_this_devices_own_checkin_history_across_the_swap() {
+        // O aparelho publicou antes (check-in próprio registrado) e AGORA recebe o snapshot de
+        // OUTRO aparelho — o histórico de check-in DESTE aparelho é bookkeeping local, não dado
+        // do snapshot baixado (que chega com `snapshot_state` vazio), e precisa sobreviver.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_before = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            3,
+            "2026-08-10T09:00:00Z",
+            &local_before.device_id,
+            "hash-publicado-antes",
+        )
+        .await
+        .unwrap();
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let remote_bytes = build_remote_db_bytes(&dir, "veio-do-remoto-2").await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 9,
+            created_at: "2026-08-12T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: local_schema,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/snap-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(remote_bytes)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("restauração deve suceder");
+        assert!(matches!(
+            result.outcome,
+            Ok(CheckoutOutcome::Restored { .. })
+        ));
+
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(
+            state_after.last_checkin_at.as_deref(),
+            Some("2026-08-10T09:00:00Z"),
+            "o check-out apagava o histórico de check-in deste aparelho — a tela voltava a dizer \
+             'nenhum check-in ainda' para um aparelho que já publicou"
+        );
+        assert_eq!(
+            state_after.last_checkin_device_id.as_deref(),
+            Some(local_before.device_id.as_str())
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Defeito 2: desfecho do check-out fica visível na tela, não só no log ------------------
+
+    #[test]
+    fn outcome_warning_fields_maps_only_the_two_outcomes_the_screen_needs_to_warn_about() {
+        assert_eq!(
+            outcome_warning_fields(&Ok(CheckoutOutcome::RefusedNewerSchema {
+                local_schema: 5,
+                remote_schema: 8,
+            })),
+            (
+                Some("refused_newer_schema".to_string()),
+                Some("5:8".to_string())
+            )
+        );
+        assert_eq!(
+            outcome_warning_fields(&Err("timeout de rede".to_string())),
+            (
+                Some("error".to_string()),
+                Some("timeout de rede".to_string())
+            )
+        );
+        // Sucesso silencioso: nada a avisar, limpa qualquer aviso pendente.
+        assert_eq!(
+            outcome_warning_fields(&Ok(CheckoutOutcome::NothingToDo)),
+            (None, None)
+        );
+        assert_eq!(
+            outcome_warning_fields(&Ok(CheckoutOutcome::Restored {
+                safeguard_path: None
+            })),
+            (None, None)
+        );
+        assert_eq!(
+            outcome_warning_fields(&Ok(CheckoutOutcome::CaughtUpOwnSequence { sequence: 3 })),
+            (None, None)
+        );
+    }
+
+    #[tokio::test]
+    async fn refused_newer_schema_outcome_is_persisted_and_visible_through_last_drive_checkin() {
+        // Atravessa a costura backend↔tela de ponta a ponta: roda o check-out de verdade, grava
+        // o desfecho pelo MESMO caminho que `checkout_on_open_best_effort` usa, e lê de volta
+        // pelo comando REAL que a tela chama (`last_drive_checkin_core`) — não uma reconstrução
+        // à mão do formato esperado.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 1,
+            created_at: "2026-08-12T10:00:00Z".into(),
+            app_version: "9.9.9".into(),
+            schema_version: local_schema + 1000,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("recusa por schema não é um erro fatal");
+        let (tag, detail) = outcome_warning_fields(&result.outcome);
+        state::record_checkout_outcome(&result.pool, tag.as_deref(), detail.as_deref())
+            .await
+            .expect("gravar desfecho");
+
+        let info = crate::commands::snapshot_cmds::last_drive_checkin_core(&result.pool)
+            .await
+            .expect("ler pelo comando real que a tela chama");
+        assert_eq!(
+            info.last_checkout_outcome.as_deref(),
+            Some("refused_newer_schema")
+        );
+        assert_eq!(
+            info.last_checkout_outcome_detail.as_deref(),
+            Some(format!("{local_schema}:{}", local_schema + 1000).as_str())
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn network_failure_outcome_is_persisted_and_visible_through_last_drive_checkin() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .with_body(r#"{"error": {"message": "backend hiccup"}}"#)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("falha de rede não é fatal");
+        let (tag, detail) = outcome_warning_fields(&result.outcome);
+        state::record_checkout_outcome(&result.pool, tag.as_deref(), detail.as_deref())
+            .await
+            .expect("gravar desfecho");
+
+        let info = crate::commands::snapshot_cmds::last_drive_checkin_core(&result.pool)
+            .await
+            .expect("ler pelo comando real que a tela chama");
+        assert_eq!(info.last_checkout_outcome.as_deref(), Some("error"));
+        assert!(
+            info.last_checkout_outcome_detail
+                .as_deref()
+                .unwrap()
+                .contains("backend hiccup"),
+            "detalhe: {:?}",
+            info.last_checkout_outcome_detail
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checkout_outcome_warning_is_cleared_by_a_later_successful_checkout() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        state::record_checkout_outcome(&pool, Some("error"), Some("tentativa anterior"))
+            .await
+            .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive).await.unwrap();
+        assert_eq!(result.outcome, Ok(CheckoutOutcome::NothingToDo));
+        let (tag, detail) = outcome_warning_fields(&result.outcome);
+        state::record_checkout_outcome(&result.pool, tag.as_deref(), detail.as_deref())
+            .await
+            .unwrap();
+
+        let info = crate::commands::snapshot_cmds::last_drive_checkin_core(&result.pool)
+            .await
+            .unwrap();
+        assert!(
+            info.last_checkout_outcome.is_none(),
+            "um check-out bem-sucedido depois limpa o aviso da tentativa anterior"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Defeito 3: nunca restaura o próprio snapshot por cima de trabalho posterior -----------
+
+    #[tokio::test]
+    async fn adopts_the_remote_sequence_without_restoring_when_the_manifest_is_our_own_device() {
+        // O remoto avançou (sequência acima da nossa base), mas com o NOSSO PRÓPRIO device_id —
+        // um check-in cujo upload confirmou mas cuja gravação local morreu antes de terminar.
+        // Restaurar de verdade baixaria e trocaria pelo NOSSO PRÓPRIO snapshot antigo, descartando
+        // qualquer gesto feito depois daquele upload. Nenhum mock de download é registrado: se o
+        // código tentasse baixar mesmo assim, a chamada não-mockada devolveria 501 e o teste
+        // acusaria a diferença.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_before = state::load_or_init(&pool).await.unwrap();
+        crate::commands::app_setting_set(
+            &pool,
+            "local_only_marker",
+            "trabalho-posterior-ao-upload",
+        )
+        .await
+        .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: local_before.device_id.clone(),
+            sequence: 1,
+            created_at: "2026-08-12T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("adotar a própria sequência não é um erro");
+        assert_eq!(
+            result.outcome,
+            Ok(CheckoutOutcome::CaughtUpOwnSequence { sequence: 1 })
+        );
+
+        // Conteúdo local INTOCADO: nada foi baixado nem trocado.
+        let marker = crate::commands::app_setting_get(&result.pool, "local_only_marker")
+            .await
+            .unwrap();
+        assert_eq!(marker.as_deref(), Some("trabalho-posterior-ao-upload"));
+
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.device_id, local_before.device_id);
+        assert_eq!(
+            state_after.base_sequence, 1,
+            "a base local alcança a sequência remota mesmo sem restaurar"
+        );
+        assert!(
+            state_after.last_checkout_at.is_none(),
+            "nada foi de fato lido de outro aparelho — o eixo de check-out não muda"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

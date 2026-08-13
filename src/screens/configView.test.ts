@@ -6,6 +6,7 @@ import {
   driveCheckinErrorMessage,
   driveCheckinLabel,
   driveCheckoutLabel,
+  driveCheckoutOutcomeWarning,
   greetState,
 } from "./configView";
 
@@ -120,6 +121,8 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
         last_checkin_device_id: "device-a",
         last_checkout_at: null,
         last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "device-a",
       },
       now,
@@ -134,6 +137,8 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
         last_checkin_device_id: "device-bbbbbbbb-cccc",
         last_checkout_at: null,
         last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "device-a",
       },
       now,
@@ -157,11 +162,77 @@ describe("driveCheckoutLabel — recência + aparelho de origem do último check
         last_checkin_device_id: null,
         last_checkout_at: "2026-08-11T14:55:00+00:00",
         last_checkout_device_id: "device-bbbbbbbb-cccc",
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "device-a",
       },
       now,
     );
     expect(label).toBe("Última leitura há 5 min, de outro aparelho (device-b).");
+  });
+
+  it("compara com this_device_id, como o lado do check-in — nunca crava 'outro aparelho'", () => {
+    // O check-out normalmente vem de OUTRO aparelho, mas o backend pode registrar o NOSSO
+    // device_id ali (ex.: um estado antigo, ou um bug que este PR corrige do lado do backend) —
+    // a tela não pode mentir "outro aparelho" quando o id bate com o deste aparelho.
+    const label = driveCheckoutLabel(
+      {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: "2026-08-11T14:55:00+00:00",
+        last_checkout_device_id: "device-a",
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
+        this_device_id: "device-a",
+      },
+      now,
+    );
+    expect(label).toBe("Última leitura há 5 min, deste aparelho.");
+  });
+});
+
+describe("driveCheckoutOutcomeWarning — aviso do desfecho do check-out (spec 043 US11)", () => {
+  it("nada a avisar quando não há info ou o desfecho é null", () => {
+    expect(driveCheckoutOutcomeWarning(null)).toBeNull();
+    expect(driveCheckoutOutcomeWarning(undefined)).toBeNull();
+    expect(
+      driveCheckoutOutcomeWarning({
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
+        this_device_id: "device-a",
+      }),
+    ).toBeNull();
+  });
+
+  it("schema mais novo: orienta a atualizar o app", () => {
+    const warning = driveCheckoutOutcomeWarning({
+      last_checkin_at: null,
+      last_checkin_device_id: null,
+      last_checkout_at: null,
+      last_checkout_device_id: null,
+      last_checkout_outcome: "refused_newer_schema",
+      last_checkout_outcome_detail: "3:4",
+      this_device_id: "device-a",
+    });
+    expect(warning).toContain("atualiz");
+  });
+
+  it("falha de rede/integridade: diz que a leitura não aconteceu e que tenta na próxima abertura", () => {
+    const warning = driveCheckoutOutcomeWarning({
+      last_checkin_at: null,
+      last_checkin_device_id: null,
+      last_checkout_at: null,
+      last_checkout_device_id: null,
+      last_checkout_outcome: "error",
+      last_checkout_outcome_detail: "timeout de rede",
+      this_device_id: "device-a",
+    });
+    expect(warning).toContain("não aconteceu");
+    expect(warning).toContain("próxima abertura");
   });
 });
 

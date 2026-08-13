@@ -33,6 +33,13 @@ pub struct DriveCheckinInfo {
     /// `device_id` de quem publicou o snapshot que este aparelho baixou por último — de qual
     /// aparelho veio, nunca a identidade deste.
     pub last_checkout_device_id: Option<String>,
+    /// Rótulo fechado do desfecho do ÚLTIMO check-out que mereceu aviso (ADR-0015):
+    /// `"refused_newer_schema"` (o snapshot remoto tem schema mais nova — orientar a
+    /// atualizar o app) ou `"error"` (rede/integridade — a leitura não aconteceu, tenta na
+    /// próxima abertura). `None` quando o check-out mais recente não tem nada a avisar.
+    pub last_checkout_outcome: Option<String>,
+    /// Complemento do desfecho acima (versões de schema na recusa, mensagem de erro na falha).
+    pub last_checkout_outcome_detail: Option<String>,
     pub this_device_id: String,
 }
 
@@ -46,16 +53,25 @@ pub struct DriveCheckinResult {
     pub published: bool,
 }
 
-#[tauri::command]
-pub async fn last_drive_checkin(pool: State<'_, SqlitePool>) -> Result<DriveCheckinInfo, String> {
-    let st = state::load_or_init(pool.inner()).await?;
+/// Núcleo testável de `last_drive_checkin` — mesmo split de `drive_checkin`/`drive_checkin_core`:
+/// o comando Tauri é um wrapper fino sobre `State<'_, SqlitePool>`, este recebe `&SqlitePool` puro
+/// para os testes atravessarem a costura backend↔tela sem precisar de um runtime Tauri.
+pub(crate) async fn last_drive_checkin_core(pool: &SqlitePool) -> Result<DriveCheckinInfo, String> {
+    let st = state::load_or_init(pool).await?;
     Ok(DriveCheckinInfo {
         last_checkin_at: st.last_checkin_at,
         last_checkin_device_id: st.last_checkin_device_id,
         last_checkout_at: st.last_checkout_at,
         last_checkout_device_id: st.last_checkout_device_id,
+        last_checkout_outcome: st.last_checkout_outcome,
+        last_checkout_outcome_detail: st.last_checkout_outcome_detail,
         this_device_id: st.device_id,
     })
+}
+
+#[tauri::command]
+pub async fn last_drive_checkin(pool: State<'_, SqlitePool>) -> Result<DriveCheckinInfo, String> {
+    last_drive_checkin_core(pool.inner()).await
 }
 
 /// O gesto de check-in: exporta um snapshot íntegro (`db_export::vacuum_into_atomic`, o mesmo
@@ -115,6 +131,8 @@ pub(crate) async fn drive_checkin_core(
                     last_checkin_device_id: local_state.last_checkin_device_id,
                     last_checkout_at: local_state.last_checkout_at,
                     last_checkout_device_id: local_state.last_checkout_device_id,
+                    last_checkout_outcome: local_state.last_checkout_outcome,
+                    last_checkout_outcome_detail: local_state.last_checkout_outcome_detail,
                     this_device_id: local_state.device_id,
                 },
                 published: false,
@@ -161,6 +179,8 @@ pub(crate) async fn drive_checkin_core(
             last_checkin_device_id: Some(local_state.device_id.clone()),
             last_checkout_at: local_state.last_checkout_at,
             last_checkout_device_id: local_state.last_checkout_device_id,
+            last_checkout_outcome: local_state.last_checkout_outcome,
+            last_checkout_outcome_detail: local_state.last_checkout_outcome_detail,
             this_device_id: local_state.device_id,
         },
         published: true,

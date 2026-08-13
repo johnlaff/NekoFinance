@@ -18,6 +18,13 @@ pub struct SnapshotState {
     /// este recebeu, nunca a identidade deste aparelho (espelha `last_checkin_device_id`, que é
     /// "por qual aparelho" do lado do check-in).
     pub last_checkout_device_id: Option<String>,
+    /// Rótulo fechado do desfecho do ÚLTIMO check-out que mereceu aviso na UI: `None` quando o
+    /// check-out foi em dia, restaurou com sucesso, ou nunca rodou — só os dois desfechos que a
+    /// UI de Conexão precisa avisar (`"refused_newer_schema"`, `"error"`) ficam aqui.
+    pub last_checkout_outcome: Option<String>,
+    /// Complemento do desfecho acima: versões de schema local/remoto na recusa, ou a mensagem de
+    /// erro na falha. Sem significado quando `last_checkout_outcome` é `None`.
+    pub last_checkout_outcome_detail: Option<String>,
 }
 
 /// Garante que a linha singleton existe, gerando `device_id` (UUID v4) na primeira leitura DESTE
@@ -33,10 +40,13 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
+            Option<String>,
         ),
     >(
         "SELECT device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
-         last_export_sha256, last_checkout_at, last_checkout_device_id \
+         last_export_sha256, last_checkout_at, last_checkout_device_id, \
+         last_checkout_outcome, last_checkout_outcome_detail \
          FROM snapshot_state WHERE id = 1",
     )
     .fetch_optional(pool)
@@ -51,6 +61,8 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
             last_export_sha256: row.4,
             last_checkout_at: row.5,
             last_checkout_device_id: row.6,
+            last_checkout_outcome: row.7,
+            last_checkout_outcome_detail: row.8,
         });
     }
 
@@ -69,6 +81,8 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
         last_export_sha256: None,
         last_checkout_at: None,
         last_checkout_device_id: None,
+        last_checkout_outcome: None,
+        last_checkout_outcome_detail: None,
     })
 }
 
@@ -104,19 +118,31 @@ pub async fn record_checkin(
 /// arquivo — precisa ser capturado pelo chamador antes do swap e passado aqui, nunca gerado de
 /// novo: a identidade do aparelho é bookkeeping local, não dado que viaja no snapshot.
 ///
+/// `last_checkin_at`/`last_checkin_device_id` são o MESMO tipo de bookkeeping local: o histórico
+/// de check-in deste aparelho não veio no arquivo baixado (foi apagado do lado de quem publicou),
+/// então precisa ser capturado e re-semeado junto do `device_id` — sem isso, um aparelho que já
+/// publicou perde o próprio histórico a cada check-out e a UI volta a dizer "nenhum check-in
+/// ainda" para quem já fez um.
+///
 /// `ON CONFLICT` (em vez de `INSERT` cru) porque o arquivo baixado, embora normalmente stripped,
 /// não é sob controle deste aparelho — um upsert idempotente é mais seguro que assumir a tabela
-/// vazia.
+/// vazia. Quando a linha JÁ existe (a troca não encontrou uma tabela vazia), o `SET` não toca
+/// `last_checkin_at`/`last_checkin_device_id`: os valores capturados só valem para SEMEAR uma
+/// linha nova, nunca para sobrescrever um histórico de check-in que já estava ali.
 pub async fn adopt_after_restore(
     pool: &SqlitePool,
     device_id: &str,
     base_sequence: i64,
     checked_out_at: &str,
     remote_device_id: &str,
+    last_checkin_at: Option<&str>,
+    last_checkin_device_id: Option<&str>,
 ) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO snapshot_state (id, device_id, base_sequence, last_checkout_at, last_checkout_device_id) \
-         VALUES (1, ?1, ?2, ?3, ?4) \
+        "INSERT INTO snapshot_state \
+            (id, device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
+             last_checkout_at, last_checkout_device_id) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6) \
          ON CONFLICT (id) DO UPDATE SET \
             device_id = excluded.device_id, \
             base_sequence = excluded.base_sequence, \
@@ -125,11 +151,49 @@ pub async fn adopt_after_restore(
     )
     .bind(device_id)
     .bind(base_sequence)
+    .bind(last_checkin_at)
+    .bind(last_checkin_device_id)
     .bind(checked_out_at)
     .bind(remote_device_id)
     .execute(pool)
     .await
     .map_err(|e| format!("adotar estado pós-restauração: {e}"))?;
+    Ok(())
+}
+
+/// Avança só a sequência-base local, sem tocar em mais nada — o caso em que o manifest remoto
+/// carrega o NOSSO PRÓPRIO `device_id` (ADR-0015: um check-in que morreu entre o upload
+/// confirmado e a gravação do estado local deixa o remoto um passo à frente da nossa base, com a
+/// NOSSA identidade). O conteúdo já é nosso — só a base local está atrasada;
+/// restaurar de verdade descartaria qualquer trabalho feito depois do upload. Nunca mexe em
+/// `last_checkout_at`/`last_checkout_device_id`: nada foi de fato lido de outro aparelho.
+pub async fn adopt_own_sequence(pool: &SqlitePool, base_sequence: i64) -> Result<(), String> {
+    sqlx::query("UPDATE snapshot_state SET base_sequence = ?1 WHERE id = 1")
+        .bind(base_sequence)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("adotar sequência do próprio aparelho: {e}"))?;
+    Ok(())
+}
+
+/// Grava o desfecho do último check-out que merece aviso na UI (ADR-0015):
+/// `outcome: None` limpa qualquer aviso pendente (o check-out mais recente foi em dia, restaurou
+/// com sucesso, ou apenas adotou a própria sequência) — um aviso de uma tentativa ANTERIOR não
+/// pode sobreviver a um check-out bem-sucedido subsequente.
+pub async fn record_checkout_outcome(
+    pool: &SqlitePool,
+    outcome: Option<&str>,
+    detail: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE snapshot_state SET last_checkout_outcome = ?1, last_checkout_outcome_detail = ?2 \
+         WHERE id = 1",
+    )
+    .bind(outcome)
+    .bind(detail)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("gravar desfecho do check-out: {e}"))?;
     Ok(())
 }
 
@@ -240,9 +304,13 @@ mod tests {
 
     #[tokio::test]
     async fn adopt_after_restore_leaves_preexisting_checkin_fields_untouched() {
-        // O upsert de `adopt_after_restore` só escreve device_id/base_sequence/check-out — quando
-        // a linha JÁ existe (a restauração aconteceu num banco com histórico de check-in próprio,
-        // não recém-criado), esse histórico sobrevive à troca de arquivo.
+        // O upsert de `adopt_after_restore` escreve device_id/base_sequence/check-out
+        // incondicionalmente, mas quando a linha JÁ existe (a restauração aconteceu num banco com
+        // histórico de check-in próprio, não recém-criado), o `ON CONFLICT` NÃO tem
+        // `last_checkin_at`/`last_checkin_device_id` no `SET` — os argumentos capturados abaixo
+        // são propositalmente valores que NÃO deveriam aparecer no resultado, para provar que são
+        // ignorados neste ramo (só valem para semear uma linha nova, nunca para sobrescrever um
+        // histórico de check-in que já estava ali).
         let pool = single_connection_pool().await;
         let initial = load_or_init(&pool).await.expect("init");
         record_checkin(
@@ -261,6 +329,8 @@ mod tests {
             4,
             "2026-08-12 08:00:00",
             "outro-aparelho",
+            Some("captured-mas-deve-ser-ignorado"),
+            Some("captured-device-mas-deve-ser-ignorado"),
         )
         .await
         .expect("adopt_after_restore");
@@ -278,13 +348,88 @@ mod tests {
             after.last_checkout_device_id.as_deref(),
             Some("outro-aparelho")
         );
-        // Check-in não muda: check-out é um eixo independente do mesmo estado.
+        // Check-in não muda: check-out é um eixo independente do mesmo estado, e o histórico
+        // PRÉ-EXISTENTE vence os argumentos capturados passados acima.
         assert_eq!(after.device_id, initial.device_id);
         assert_eq!(
             after.last_checkin_at.as_deref(),
             Some("2026-08-11 09:00:00")
         );
+        assert_eq!(
+            after.last_checkin_device_id.as_deref(),
+            Some(initial.device_id.as_str())
+        );
         assert_eq!(after.last_export_sha256.as_deref(), Some("seed-hash"));
+    }
+
+    #[tokio::test]
+    async fn adopt_after_restore_preserves_this_devices_own_checkin_history_across_the_swap() {
+        // O arquivo baixado do Drive chega com `snapshot_state` VAZIO (stripped do lado de quem
+        // publicou) — mas o histórico de check-in que se perde não é do arquivo baixado, é DESTE
+        // aparelho, capturado ANTES da troca. Simula exatamente isso: semeia um check-in real
+        // numa "pool de origem" (o aparelho antes da troca), lê de volta (o que o chamador real
+        // faz em `checkout.rs` antes de fechar o pool antigo), e semeia a linha singleton no
+        // destino (a pool vazia, o arquivo recém-baixado) com os valores capturados.
+        let source_pool = single_connection_pool().await;
+        let source_state = load_or_init(&source_pool).await.expect("init da origem");
+        record_checkin(
+            &source_pool,
+            2,
+            "2026-08-10 09:00:00",
+            &source_state.device_id,
+            "hash-antes-da-troca",
+        )
+        .await
+        .expect("record_checkin na origem");
+        let captured = load_or_init(&source_pool)
+            .await
+            .expect("captura antes de fechar a pool antiga");
+
+        let destination_pool = single_connection_pool().await;
+        // Simula o banco RECÉM-RESTAURADO: `snapshot_state` chega vazio.
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM snapshot_state")
+            .fetch_one(&destination_pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        adopt_after_restore(
+            &destination_pool,
+            &captured.device_id,
+            7,
+            "2026-08-12 08:00:00",
+            "device-que-publicou",
+            captured.last_checkin_at.as_deref(),
+            captured.last_checkin_device_id.as_deref(),
+        )
+        .await
+        .expect("adopt_after_restore");
+
+        let after = load_or_init(&destination_pool).await.expect("releitura");
+        assert_eq!(
+            after.device_id, captured.device_id,
+            "a identidade deste aparelho sobrevive à troca de arquivo — nunca é regerada"
+        );
+        assert_eq!(after.base_sequence, 7);
+        assert_eq!(
+            after.last_checkout_at.as_deref(),
+            Some("2026-08-12 08:00:00")
+        );
+        assert_eq!(
+            after.last_checkout_device_id.as_deref(),
+            Some("device-que-publicou")
+        );
+        // O histórico de check-in DESTE aparelho, capturado antes da troca, sobrevive — a tela
+        // não pode voltar a dizer "nenhum check-in ainda" para um aparelho que já publicou.
+        assert_eq!(
+            after.last_checkin_at.as_deref(),
+            Some("2026-08-10 09:00:00"),
+            "o check-out apagava o histórico de check-in deste aparelho — precisa sobreviver"
+        );
+        assert_eq!(
+            after.last_checkin_device_id.as_deref(),
+            Some(captured.device_id.as_str())
+        );
     }
 
     #[tokio::test]
@@ -305,6 +450,8 @@ mod tests {
             7,
             "2026-08-12 08:00:00",
             "device-que-publicou",
+            None,
+            None,
         )
         .await
         .expect("adopt_after_restore");
@@ -323,6 +470,7 @@ mod tests {
             after.last_checkout_device_id.as_deref(),
             Some("device-que-publicou")
         );
+        // Sem check-in prévio capturado (aparelho novo, nunca publicou): não há o que preservar.
         assert!(after.last_checkin_at.is_none());
     }
 
@@ -337,6 +485,8 @@ mod tests {
             2,
             "2026-08-12 08:00:00",
             "device-que-publicou",
+            None,
+            None,
         )
         .await
         .expect("primeira adoção");
@@ -346,6 +496,8 @@ mod tests {
             5,
             "2026-08-12 09:00:00",
             "device-que-publicou-de-novo",
+            None,
+            None,
         )
         .await
         .expect("segunda adoção não deve falhar por PK duplicada");
@@ -356,6 +508,68 @@ mod tests {
             after.last_checkout_device_id.as_deref(),
             Some("device-que-publicou-de-novo")
         );
+    }
+
+    #[tokio::test]
+    async fn adopt_own_sequence_advances_base_without_touching_checkout_bookkeeping() {
+        // O manifest remoto tem o NOSSO device_id (um check-in que morreu entre o upload e a
+        // gravação local) — a base local avança para alcançar o remoto, mas nada foi de fato
+        // LIDO de outro aparelho: `last_checkout_at`/`last_checkout_device_id` continuam como
+        // estavam antes.
+        let pool = single_connection_pool().await;
+        let initial = load_or_init(&pool).await.expect("init");
+        record_checkin(
+            &pool,
+            1,
+            "2026-08-11 09:00:00",
+            &initial.device_id,
+            "hash-1",
+        )
+        .await
+        .expect("record_checkin");
+
+        adopt_own_sequence(&pool, 2)
+            .await
+            .expect("adopt_own_sequence");
+
+        let after = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(after.base_sequence, 2);
+        assert!(
+            after.last_checkout_at.is_none(),
+            "nada foi lido de outro aparelho — o eixo de check-out não deve mudar"
+        );
+        // Check-in preservado: eixo independente.
+        assert_eq!(
+            after.last_checkin_at.as_deref(),
+            Some("2026-08-11 09:00:00")
+        );
+    }
+
+    #[tokio::test]
+    async fn record_checkout_outcome_writes_and_then_clears_the_pending_warning() {
+        let pool = single_connection_pool().await;
+        load_or_init(&pool).await.expect("init");
+
+        record_checkout_outcome(&pool, Some("refused_newer_schema"), Some("1:2"))
+            .await
+            .expect("gravar desfecho");
+        let after_warning = load_or_init(&pool).await.expect("releitura");
+        assert_eq!(
+            after_warning.last_checkout_outcome.as_deref(),
+            Some("refused_newer_schema")
+        );
+        assert_eq!(
+            after_warning.last_checkout_outcome_detail.as_deref(),
+            Some("1:2")
+        );
+
+        // Um check-out bem-sucedido subsequente limpa o aviso — ele não pode sobreviver.
+        record_checkout_outcome(&pool, None, None)
+            .await
+            .expect("limpar desfecho");
+        let after_clear = load_or_init(&pool).await.expect("releitura");
+        assert!(after_clear.last_checkout_outcome.is_none());
+        assert!(after_clear.last_checkout_outcome_detail.is_none());
     }
 
     #[tokio::test]

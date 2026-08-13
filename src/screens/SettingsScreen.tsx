@@ -53,6 +53,7 @@ import {
   driveCheckinErrorMessage,
   driveCheckinLabel,
   driveCheckoutLabel,
+  driveCheckoutOutcomeWarning,
   DRIVE_CHECKIN_UP_TO_DATE_NOTE,
   fetchAppInfo,
   fetchConfigSetting,
@@ -846,6 +847,7 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
+  const checkoutWarning = driveCheckoutOutcomeWarning(info);
 
   async function doCheckin() {
     if (!GOOGLE_CLIENT_ID) return;
@@ -912,8 +914,21 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
         }
       />
       {/* Check-out roda sozinho ao abrir o app (ADR-0015) — sem botão, só o registro de quando
-          e de qual aparelho veio a última leitura. */}
-      <Line title="Última leitura do Drive" sub={driveCheckoutLabel(info)} />
+          e de qual aparelho veio a última leitura, mais o aviso de um desfecho que mereça a
+          atenção do dono (recusa por schema mais novo, falha de rede/integridade). */}
+      <Line
+        title="Última leitura do Drive"
+        sub={
+          <>
+            {driveCheckoutLabel(info)}{" "}
+            {checkoutWarning ? (
+              <strong role="alert" className="config__err">
+                {checkoutWarning}
+              </strong>
+            ) : null}
+          </>
+        }
+      />
     </>
   );
 }

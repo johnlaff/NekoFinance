@@ -44,12 +44,98 @@ pub(crate) async fn validate_downloaded_db(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Grava `bytes` no `tmp_path` e valida a integridade antes de qualquer troca — o par de passos
+/// que `checkout_on_open` roda ANTES do ponto de não-retorno (fechar o pool antigo). Limpa o
+/// temporário em QUALQUER falha deste par, gravação ou validação: um download que falha no meio
+/// (disco cheio, permissão) pode deixar bytes parciais no `tmp_path`, e sem a limpeza aqui esse
+/// arquivo fica para sempre — a mesma classe de lixo que `swap_active_db_atomically` evita do
+/// lado da salvaguarda.
+pub(crate) async fn stage_downloaded_snapshot(tmp_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Err(e) = tokio::fs::write(tmp_path, bytes).await {
+        let _ = tokio::fs::remove_file(tmp_path).await;
+        return Err(format!("gravar snapshot baixado: {e}"));
+    }
+    if let Err(e) = validate_downloaded_db(tmp_path).await {
+        let _ = std::fs::remove_file(tmp_path);
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// Anexa `suffix` ao PATH INTEIRO (não à extensão) — a convenção real dos sidecars WAL/SHM do
 /// SQLite é `<caminho-completo-do-db>-wal` / `-shm`, nunca baseada em `file_stem`.
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     let mut s = path.as_os_str().to_os_string();
     s.push(suffix);
     PathBuf::from(s)
+}
+
+/// Cria a salvaguarda do banco ativo por CÓPIA (nunca renomeio) e devolve o caminho, ou `None`
+/// quando não existe banco ativo para salvaguardar. Extraída de `swap_active_db_atomically` para
+/// ser exercitável ISOLADAMENTE: um teste que chama só ESTE passo e verifica `active_db.exists()`
+/// prova a garantia central do ADR-0015 (o banco ativo nunca fica ausente) de um jeito que nenhum
+/// teste da função inteira, que só olha o desfecho FINAL do fluxo completo (sucesso ou erro),
+/// consegue provar — um rollback bem escrito pode restaurar `active_db` no final mesmo que a
+/// implementação deste passo o tenha feito desaparecer no meio do caminho.
+fn create_safeguard_copy(active_db: &Path) -> Result<Option<PathBuf>, String> {
+    if !active_db.exists() {
+        return Ok(None);
+    }
+    let parent = active_db.parent().unwrap_or_else(|| Path::new("."));
+    let stem = active_db
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("neko-finance");
+    let safeguard = parent.join(format!("{stem}.pre-restore-{}.db", uuid::Uuid::new_v4()));
+
+    std::fs::copy(active_db, &safeguard).map_err(|e| format!("salvaguardar banco ativo: {e}"))?;
+    for suffix in ["-wal", "-shm"] {
+        let src = sidecar(active_db, suffix);
+        if src.exists() {
+            let _ = std::fs::copy(&src, sidecar(&safeguard, suffix));
+        }
+    }
+    Ok(Some(safeguard))
+}
+
+/// Remove salvaguardas `.pre-restore-*` mais antigas que a que acabou de ser criada (`keep`), ao
+/// lado de `active_db` — cada check-out bem-sucedido copiava o banco inteiro para uma nova
+/// salvaguarda e nunca removia as anteriores, o que crescia sem limite (uma cópia integral do
+/// banco por check-out, para sempre). Só a mais recente vale a pena reter: é a única com chance
+/// real de servir como recuperação manual do estado imediatamente anterior. Melhor esforço:
+/// entradas ilegíveis (permissão, corrida com outro processo) são ignoradas, nunca propagadas —
+/// retenção de lixo não pode derrubar uma restauração que já teve sucesso.
+fn prune_older_safeguards(active_db: &Path, keep: Option<&Path>) {
+    let parent = active_db.parent().unwrap_or_else(|| Path::new("."));
+    let stem = active_db
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("neko-finance");
+    let prefix = format!("{stem}.pre-restore-");
+    // O nome do arquivo `.db` da salvaguarda RECÉM-CRIADA é o prefixo dos SEUS PRÓPRIOS sidecars
+    // (`<mesmo-nome>.db-wal`/`-shm`) — comparar por PREFIXO, não só por igualdade exata, para não
+    // apagar os sidecars da salvaguarda que esta troca acabou de criar junto com as antigas.
+    let keep_name = keep
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned());
+
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if let Some(keep_name) = &keep_name
+            && name_str.starts_with(keep_name.as_str())
+        {
+            continue;
+        }
+        // Casa o prefixo tanto do `.db` principal quanto dos sidecars `-wal`/`-shm` de
+        // salvaguardas antigas (ambos começam pelo mesmo `{stem}.pre-restore-`).
+        if name_str.starts_with(&prefix) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Troca `active_db` pelo arquivo já baixado e validado em `downloaded`. Quando `active_db` já
@@ -77,34 +163,24 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 /// Pré-condição do chamador: nenhum pool/conexão está com `active_db` aberto neste momento (o
 /// `checkout_on_open` fecha o pool de leitura ANTES de chamar isto) — um arquivo em uso não pode
 /// ser substituído de forma atômica no Windows, e no Unix desvincularia o handle aberto.
+///
+/// Retenção: só a salvaguarda que ESTA troca acabou de criar sobrevive — qualquer
+/// `.pre-restore-*` mais antiga ao lado de `active_db` (de check-outs anteriores) é removida
+/// depois que o rename final confirma, nunca antes (uma salvaguarda velha só pode sumir depois
+/// que a nova já está no lugar). Sem isso, cada check-out bem-sucedido deixava mais uma cópia
+/// integral do banco no disco, para sempre.
 pub(crate) fn swap_active_db_atomically(
     downloaded: &Path,
     active_db: &Path,
 ) -> Result<Option<PathBuf>, String> {
-    let parent = active_db.parent().unwrap_or_else(|| Path::new("."));
-    let stem = active_db
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("neko-finance");
-    let safeguard = parent.join(format!("{stem}.pre-restore-{}.db", uuid::Uuid::new_v4()));
-
-    let had_active = active_db.exists();
-    if had_active {
-        std::fs::copy(active_db, &safeguard)
-            .map_err(|e| format!("salvaguardar banco ativo: {e}"))?;
-        for suffix in ["-wal", "-shm"] {
-            let src = sidecar(active_db, suffix);
-            if src.exists() {
-                let _ = std::fs::copy(&src, sidecar(&safeguard, suffix));
-            }
-        }
-    }
+    let safeguard = create_safeguard_copy(active_db)?;
+    let had_active = safeguard.is_some();
 
     if let Err(e) = std::fs::rename(downloaded, active_db) {
-        if had_active {
-            let _ = std::fs::remove_file(&safeguard);
+        if let Some(safeguard) = &safeguard {
+            let _ = std::fs::remove_file(safeguard);
             for suffix in ["-wal", "-shm"] {
-                let _ = std::fs::remove_file(sidecar(&safeguard, suffix));
+                let _ = std::fs::remove_file(sidecar(safeguard, suffix));
             }
         }
         return Err(format!("trocar pelo snapshot baixado: {e}"));
@@ -116,7 +192,9 @@ pub(crate) fn swap_active_db_atomically(
         }
     }
 
-    Ok(had_active.then_some(safeguard))
+    prune_older_safeguards(active_db, safeguard.as_deref());
+
+    Ok(safeguard)
 }
 
 #[cfg(test)]
@@ -289,6 +367,143 @@ mod tests {
             leftovers.is_empty(),
             "salvaguarda deve voltar ao lugar após o rollback"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_safeguard_copy_never_removes_the_active_db() {
+        // Regressão do defeito descrito no ADR-0015: uma implementação que RENOMEIA `active_db`
+        // para criar a salvaguarda (em vez de copiar) faz `active_db` desaparecer NESTE passo — um
+        // crash exatamente entre este passo e o rename final encontraria `active_db` ausente. Um
+        // teste da função `swap_active_db_atomically` INTEIRA, que só observa o desfecho FINAL
+        // (sucesso ou erro do fluxo completo), não pega isso: dependendo de como o caminho de erro
+        // trata a salvaguarda depois, `active_db` pode acabar presente de novo no final mesmo
+        // tendo ficado ausente NO MEIO. Testar a etapa da salvaguarda EM ISOLADO — sem chegar perto
+        // do rename final — é o que distingue as duas implementações de verdade: com cópia,
+        // `active_db` nunca deixa de existir neste passo; com renomeio, deixaria.
+        let dir = test_dir();
+        let active = dir.join("active.db");
+        std::fs::write(&active, b"conteudo original").unwrap();
+
+        let safeguard = create_safeguard_copy(&active).expect("salvaguardar deve suceder");
+
+        assert!(
+            active.exists(),
+            "o banco ativo não pode sumir ao criar a salvaguarda"
+        );
+        assert_eq!(std::fs::read(&active).unwrap(), b"conteudo original");
+        let safeguard = safeguard.expect("banco ativo pré-existente gera salvaguarda");
+        assert_eq!(std::fs::read(&safeguard).unwrap(), b"conteudo original");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_safeguard_copy_returns_none_when_there_is_no_active_db_to_protect() {
+        let dir = test_dir();
+        let active = dir.join("active.db");
+
+        let safeguard = create_safeguard_copy(&active).expect("não há erro sem banco ativo");
+
+        assert!(safeguard.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn swap_active_db_atomically_retains_only_the_most_recent_safeguard() {
+        // Cada check-out bem-sucedido antes desta correção deixava mais uma cópia integral do
+        // banco no disco, sem limite — simula duas salvaguardas "antigas" já no diretório (de
+        // check-outs anteriores) e confirma que só a NOVA sobrevive depois da troca.
+        let dir = test_dir();
+        let active = dir.join("active.db");
+        let downloaded = dir.join("downloaded.db");
+        std::fs::write(&active, b"conteudo antigo").unwrap();
+        std::fs::write(&downloaded, b"conteudo novo").unwrap();
+
+        let old_safeguard_1 =
+            dir.join("active.pre-restore-11111111-1111-1111-1111-111111111111.db");
+        let old_safeguard_2 =
+            dir.join("active.pre-restore-22222222-2222-2222-2222-222222222222.db");
+        std::fs::write(&old_safeguard_1, b"salvaguarda antiga 1").unwrap();
+        std::fs::write(&old_safeguard_2, b"salvaguarda antiga 2").unwrap();
+        // Sidecar de uma salvaguarda antiga (o restore atual guarda WAL/SHM junto da salvaguarda):
+        // precisa ser removido junto do `.db`, nunca sobrar órfão.
+        std::fs::write(sidecar(&old_safeguard_1, "-wal"), b"wal antigo").unwrap();
+
+        let new_safeguard = swap_active_db_atomically(&downloaded, &active)
+            .expect("troca deve suceder")
+            .expect("banco ativo pré-existente gera salvaguarda");
+
+        assert!(
+            !old_safeguard_1.exists(),
+            "salvaguarda antiga deve ser removida após a troca bem-sucedida"
+        );
+        assert!(!old_safeguard_2.exists());
+        assert!(
+            !sidecar(&old_safeguard_1, "-wal").exists(),
+            "sidecar de salvaguarda antiga não pode sobrar órfão"
+        );
+        assert!(
+            new_safeguard.exists(),
+            "a salvaguarda que ESTA troca acabou de criar deve permanecer"
+        );
+        assert_eq!(std::fs::read(&new_safeguard).unwrap(), b"conteudo antigo");
+
+        // Só a salvaguarda mais recente sobra no diretório.
+        let remaining: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("pre-restore"))
+            .collect();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "só a salvaguarda mais recente deve sobrar: {remaining:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stage_downloaded_snapshot_removes_the_leftover_file_when_the_write_fails() {
+        // Simula uma falha de gravação real (permissão negada) que ainda assim deixa um arquivo
+        // no caminho: pré-cria `tmp_path` como somente-leitura, então `tokio::fs::write` (que
+        // trunca antes de escrever) falha por permissão SEM remover o arquivo pré-existente. O
+        // caminho de validação já limpava o temporário na própria falha; este é o caminho de
+        // ESCRITA, que antes desta correção deixava o arquivo órfão para sempre.
+        let dir = test_dir();
+        let tmp_path = dir.join("staged.db");
+        std::fs::write(&tmp_path, b"lixo residual de uma tentativa anterior").unwrap();
+        let mut perms = std::fs::metadata(&tmp_path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&tmp_path, perms).unwrap();
+
+        let err = stage_downloaded_snapshot(&tmp_path, b"novos bytes baixados")
+            .await
+            .unwrap_err();
+        assert!(err.contains("gravar snapshot baixado"), "erro: {err}");
+
+        // Precisa poder apagar mesmo com o arquivo somente-leitura (permissão de escrita mora no
+        // DIRETÓRIO, não no arquivo, no Unix) — se a limpeza não rodasse, o arquivo continuaria
+        // com o conteúdo antigo em vez de sumir.
+        assert!(
+            !tmp_path.exists(),
+            "o temporário não pode sobrar quando a gravação falha"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stage_downloaded_snapshot_accepts_a_valid_download_and_leaves_it_in_place() {
+        let dir = test_dir();
+        let real_source = dir.join("real-source.db");
+        write_real_sqlite_db(&real_source).await;
+        let bytes = std::fs::read(&real_source).unwrap();
+        let tmp_path = dir.join("staged.db");
+
+        stage_downloaded_snapshot(&tmp_path, &bytes)
+            .await
+            .expect("um download íntegro deve ficar pronto para a troca");
+
+        assert!(tmp_path.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

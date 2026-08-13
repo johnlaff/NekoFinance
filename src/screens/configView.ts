@@ -157,10 +157,11 @@ export function driveCheckinLabel(
 
 /**
  * Rótulo do último check-out (a leitura do snapshot remoto ao abrir o app): recência + de qual
- * aparelho veio. Espelha `driveCheckinLabel`, mas o eixo é o inverso (o que ESTE aparelho
- * recebeu, não o que publicou) — por isso `last_checkout_device_id` nunca é comparado a
- * `this_device_id`: o snapshot puxado sempre veio de OUTRO aparelho (puxar o próprio nunca é o
- * veredito `Pull` do árbitro).
+ * aparelho veio. Espelha `driveCheckinLabel` no mesmo padrão ("deste aparelho" / "de outro
+ * aparelho (nome)") comparando `last_checkout_device_id` a `this_device_id` — o backend nunca
+ * deveria registrar o check-out do PRÓPRIO snapshot (o veredito `Pull` do árbitro exige avanço de
+ * OUTRO aparelho), mas a tela não pode assumir essa invariante silenciosamente e cravar "outro
+ * aparelho" quando os dois ids batem.
  */
 export function driveCheckoutLabel(
   info: DriveCheckinInfo | null | undefined,
@@ -170,10 +171,42 @@ export function driveCheckoutLabel(
     return "Nenhuma leitura do Drive ainda.";
   }
   const recency = syncRecencyLabel(info.last_checkout_at, now);
-  const device = `outro aparelho (${(info.last_checkout_device_id ?? "").slice(0, 8)})`;
-  return recency
-    ? `Última leitura ${recency}, de ${device}.`
-    : `Recebido de ${device}.`;
+  const isThisDevice = info.last_checkout_device_id === info.this_device_id;
+  const device = isThisDevice
+    ? "deste aparelho"
+    : `de outro aparelho (${(info.last_checkout_device_id ?? "").slice(0, 8)})`;
+  return recency ? `Última leitura ${recency}, ${device}.` : `Recebido ${device}.`;
+}
+
+/** Rótulo fechado que `snapshot_state.last_checkout_outcome` grava — mesmos dois valores que o
+ *  backend (`checkout::outcome_warning_fields`) escreve. */
+type CheckoutOutcomeTag = "refused_newer_schema" | "error";
+
+/**
+ * Aviso calmo do desfecho do último check-out que merece a atenção do dono: a
+ * recusa por schema remoto mais novo orienta a atualizar o app; a falha de rede/integridade diz
+ * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura — nunca um
+ * botão de "tentar agora" que esta tela não tem. `null` quando não há nada a avisar (check-out em
+ * dia, restaurado com sucesso, ou nunca rodou).
+ */
+export function driveCheckoutOutcomeWarning(
+  info: DriveCheckinInfo | null | undefined,
+): string | null {
+  const outcome = info?.last_checkout_outcome as CheckoutOutcomeTag | null | undefined;
+  switch (outcome) {
+    case "refused_newer_schema":
+      return (
+        "O snapshot mais recente foi publicado por uma versão mais nova do Neko Finance — " +
+        "atualize o app para receber essa leitura."
+      );
+    case "error":
+      return (
+        "A última leitura do Drive não aconteceu — o app tenta de novo sozinho na próxima " +
+        "abertura."
+      );
+    default:
+      return null;
+  }
 }
 
 // --- Leitura -----------------------------------------------------------------------------
