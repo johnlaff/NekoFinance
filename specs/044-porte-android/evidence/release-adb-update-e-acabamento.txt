@@ -1,0 +1,78 @@
+Evidência da issue #431 — release por ADB exercitado de verdade + acabamento
+móvel (tema do sistema, escala de fonte). Aparelho de referência: SM-S926B
+(100.119.20.0:5555 via Tailscale). Nenhum dado pessoal foi lido ou capturado
+nesta sessão.
+
+## 1. Release por ADB: instalar E atualizar de verdade no aparelho
+
+Build debug gerado com `bash scripts/build-android.sh --debug` (JDK 21 via mise,
+toolchain pinada do gate do spike). Instalado com `adb install -r` sobre uma
+instalação `app.neko.finance.debug` já existente no aparelho (de uma sessão
+anterior) — um update real, não uma instalação limpa:
+
+    $ adb shell dumpsys package app.neko.finance.debug | grep -iE \
+        "versionName|versionCode|firstInstallTime|lastUpdateTime"
+    versionCode=2001 minSdk=24 targetSdk=36
+    versionName=0.2.1
+    lastUpdateTime=2026-08-13 04:16:54
+      firstInstallTime=2026-08-12 18:47:12
+
+`firstInstallTime` (sessão anterior) != `lastUpdateTime` (este `adb install -r`,
+minutos atrás) — prova de update real, com os dados do app preservados (mesma
+assinatura debug, sem desinstalação).
+
+Não existe `keystore.properties`/`.jks` de release neste worktree — cada
+worktree de sessão nasce isolado e o keystore de release é "outside the repo,
+one-time per machine/maintainer" (docs/building-android.md). Gerar um novo
+agora seria criar um segredo de assinatura de release sem autorização do dono
+e órfão do `app.neko.finance` já instalado (assinatura incompatível forçaria
+desinstalar o app existente) — decisão conservadora desta sessão: não gerar.
+O fluxo release-signed já está documentado e não muda nesta entrega; falta só
+a keystore real do dono para exercitá-lo com o build assinado.
+
+## 2. Tema do sistema respeitado (User Story 11)
+
+Lido via Chrome DevTools Protocol no WebView do processo (PID 6390, mesmo
+método do item 2 do gate do spike — `webview_devtools_remote_<pid>` via
+`adb forward` + eval):
+
+    {"dataTheme":null,"storedTheme":"dark","matchesLight":false,
+     "matchesReducedMotion":false,"bodyFontSize":"14px"}
+
+`matchesLight: false` bate com o sistema: `settings get secure ui_night_mode`
+= 2 e `cmd uimode night` = "Night mode: yes" (aparelho em dark). O app abriu
+com o tema salvo de uma sessão anterior (`storedTheme: dark`); o novo fallback
+por `prefers-color-scheme` só decide quando NADA foi salvo ainda — comportamento
+determinístico coberto por unit tests (`src/shell/ThemeToggle.test.tsx`), aqui
+confirma-se que o WebView Android REPASSA a preferência do SO corretamente
+(mesma classe de verificação do item 2 do gate, para `prefers-color-scheme` em
+vez de `prefers-reduced-motion`).
+
+## 3. Escala de fonte do sistema (textZoom) — verificação parcial
+
+`MainActivity.onWebViewCreate` aplica `webView.settings.textZoom` a partir de
+`resources.configuration.fontScale` (fator 1.0 = padrão do sistema neste
+aparelho). Verificado:
+
+- Processo estável após o install: PID 6390 vivo, sem `FATAL`/`AndroidRuntime`
+  no logcat filtrado por esse PID — o bloco novo não quebrou o boot da
+  Activity (mesma classe de bug que a #430 corrigiu na inicialização do
+  cofre; aqui não há chamada JNI fora do ciclo de vida esperado, e a
+  estabilidade real no aparelho é a prova, não um `cargo test`).
+- `bodyFontSize` lido via CDP confirma a base em 14px (`--fs-body`) com
+  `fontScale` do sistema em 1.0 (textZoom=100), a leitura antes de qualquer
+  mudança de escala.
+
+**Não verificado nesta sessão**: o efeito visual de mudar
+`fontScale` do sistema em runtime (ex.: `adb shell settings put system
+font_scale 1.3` + recriação da Activity) — o aparelho entrou em tela de
+bloqueio por PIN durante a sessão (`dumpsys trust`: `deviceLocked=1`,
+`trustState=UNTRUSTED`) antes desse passo, e nenhum PIN está disponível a
+esta sessão headless. Mesma decisão conservadora de sessões anteriores
+(#430/PR#445): não tentar contornar o bloqueio de um aparelho pessoal de uso
+real. `textZoom` é a técnica padrão de mercado para WebView Android respeitar
+o tamanho de fonte do sistema (a alternativa — não fazer nada — deixa o
+WebView Android ignorando esse ajuste de acessibilidade, o gap real que esta
+issue pede para fechar); a aplicação em runtime (não só no cold start) já é
+coberta pela ausência de `fontScale` nos `configChanges` do manifesto Android
+— uma mudança em runtime recria a Activity e reaplica o valor atual.

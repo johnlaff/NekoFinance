@@ -5,11 +5,21 @@ import { logMotion, playThemeReveal, type Theme } from "./themeReveal";
 
 const THEME_KEY = "neko-theme";
 
+/** Preferência de tema do SO — só decide quando o usuário nunca escolheu no app. */
+function systemPrefersLightTheme(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: light)").matches
+  );
+}
+
 function getStoredTheme(): Theme {
   if (typeof window === "undefined") return "dark";
   const stored = localStorage.getItem(THEME_KEY);
   if (stored === "light") return "light";
-  return "dark";
+  if (stored === "dark") return "dark";
+  return systemPrefersLightTheme() ? "light" : "dark";
 }
 
 /* O tema vive num store de módulo, não em useState por instância: o shell monta

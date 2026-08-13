@@ -18,23 +18,9 @@ test.describe("fundação — chrome mobile", () => {
     await page.goto("/");
   });
 
-  test("Hoje no mobile: appbar + dock com FAB, sidebar ausente", async ({ page }) => {
-    await expect(
-      page.getByRole("navigation", { name: "Navegação do app" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("navigation", { name: "Navegação principal" }),
-    ).toBeHidden();
-    await page.waitForTimeout(350);
-    await expect(page.locator("body")).toMatchAriaSnapshot({
-      name: "mobile-hoje.aria.yml",
-    });
-    await expect(page).toHaveScreenshot("mobile-hoje-dark.png");
-  });
-
-  // Regra 18 medida no breakpoint real, com a captura acima como evidência: o veredito e o
-  // gasto do dia cabem na primeira tela. `toBeVisible` não serve de prova — ele não enxerga
-  // rolagem nem oclusão; a geometria, sim.
+  // Regra 18 medida no breakpoint real, com a captura de "Hoje no mobile" abaixo como
+  // evidência: o veredito e o gasto do dia cabem na primeira tela. `toBeVisible` não
+  // serve de prova — ele não enxerga rolagem nem oclusão; a geometria, sim.
   test("primeira tela mobile é do conteúdo primário (regra 18)", async ({ page }) => {
     await page.waitForTimeout(350);
     for (const name of ["Veredito de hoje", "Gasto variável de hoje"]) {
@@ -82,6 +68,39 @@ test.describe("fundação — chrome mobile", () => {
     await expect(page).toHaveScreenshot("mobile-menu-mais-dark.png");
   });
 });
+
+// Hoje no mobile: appbar + dock com FAB, sidebar ausente — nos dois temas. Todas as
+// outras telas têm par dark/light no mobile (app-visual.spec.ts); este par nasceu antes
+// da convenção, só com o dark.
+for (const theme of ["dark", "light"] as const) {
+  test(`Hoje no mobile ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript((t: string) => {
+      localStorage.setItem("neko-theme", t);
+    }, theme);
+    await mockTauri(page, {
+      list_scenarios_cmd: [],
+      list_scenario_transactions_cmd: [],
+      list_obligations_cmd: [],
+    });
+    await page.goto("/");
+    await expect(
+      page.getByRole("navigation", { name: "Navegação do app" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Navegação principal" }),
+    ).toBeHidden();
+    await page.waitForTimeout(350);
+    if (theme === "dark") {
+      await expect(page.locator("body")).toMatchAriaSnapshot({
+        name: "mobile-hoje.aria.yml",
+      });
+    }
+    await expect(page).toHaveScreenshot(`mobile-hoje-${theme}.png`);
+  });
+}
 
 test.describe("fundação — paleta de acento", () => {
   test("acento lima pinta o chrome; status do método não muda", async ({ page }) => {
