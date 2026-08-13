@@ -448,6 +448,17 @@ pub(crate) async fn resolve_conflict_keep_local_core(
 /// aplicaria conteúdo que o dono nunca viu, sem ele nunca ter escolhido especificamente AQUELE
 /// estado. A checagem roda ANTES de fechar o pool (ponto de não-retorno mais abaixo), então a
 /// recusa aqui ainda permite uma nova tentativa na mesma sessão.
+///
+/// Reabertura do conteúdo recém-trocado (issue #451): reusa `checkout::reopen_after_swap_or_rollback`,
+/// o mesmo helper do check-out do boot — se `swap_active_db_atomically` suceder mas
+/// `checkout::open_migrated_pool` falhar logo depois (I/O transitório, disco cheio na migração), a
+/// salvaguarda do conteúdo LOCAL de antes da troca é revertida automaticamente em vez de deixar o
+/// banco ativo preso no conteúdo remoto quebrado. `requires_restart` continua `true` em QUALQUER
+/// desfecho — mesmo no caminho feliz, sem reversão nenhuma — por simetria com o resto desta
+/// função: o pool que este comando recebeu já foi fechado no ponto de não-retorno, e não existe
+/// hoje um jeito de trocar o pool gerenciado pelo Tauri no meio de uma sessão (só `app.manage()`
+/// dentro do `setup()` faz isso), então uma reversão bem-sucedida não muda essa restrição — só
+/// evita que o dono precise restaurar a salvaguarda à mão depois de reiniciar.
 pub(crate) async fn resolve_conflict_use_remote_core(
     pool: SqlitePool,
     db_path: &Path,
@@ -499,22 +510,40 @@ pub(crate) async fn resolve_conflict_use_remote_core(
     let last_checkin_device_id = local_state.last_checkin_device_id.clone();
     pool.close().await;
 
-    if let Err(e) = restore::swap_active_db_atomically(&tmp_path, db_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        // O pool que este comando recebeu já está fechado — não há como devolver um substituto
-        // utilizável ao estado gerenciado do Tauri a partir daqui, então mesmo uma falha na troca
-        // (que deixa `db_path` intocado) exige reiniciar o app para voltar a operar. Sufixo
-        // COMPARTILHADO com as duas falhas abaixo — o frontend reconhece por ele e nunca reoferece
-        // um botão de repetir sem pool para operar (`isAfterPoolClosedError`, TypeScript).
-        return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
-    }
-
-    let new_pool = match checkout::open_migrated_pool(db_path).await {
+    let safeguard_path = match restore::swap_active_db_atomically(&tmp_path, db_path) {
         Ok(p) => p,
-        // Mesmo raciocínio: o pool ORIGINAL já foi fechado antes desta linha — abrir o pool NOVO
-        // sobre o arquivo já trocado falhando também não tem retentativa possível nesta sessão.
-        Err(e) => return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}")),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            // O pool que este comando recebeu já está fechado — não há como devolver um
+            // substituto utilizável ao estado gerenciado do Tauri a partir daqui, então mesmo uma
+            // falha na troca (que deixa `db_path` intocado) exige reiniciar o app para voltar a
+            // operar. Sufixo COMPARTILHADO com as falhas abaixo — o frontend reconhece por ele e
+            // nunca reoferece um botão de repetir sem pool para operar (`isAfterPoolClosedError`,
+            // TypeScript).
+            return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
+        }
     };
+
+    let new_pool =
+        match checkout::reopen_after_swap_or_rollback(db_path, safeguard_path.as_deref()).await {
+            Ok(checkout::ReopenOutcome::Reopened(p)) => p,
+            // Reabrir o conteúdo do outro aparelho falhou, mas HAVIA uma salvaguarda do conteúdo
+            // LOCAL de antes da troca — revertida e reaberta com sucesso (issue #451). O banco ativo
+            // já está de volta ao conteúdo local (com a disputa ainda marcada como pendente, a mesma
+            // que trouxe o dono a esta tela) — só falta reiniciar para o pool gerenciado acompanhar,
+            // a mesma exigência do caminho feliz desta função.
+            Ok(checkout::ReopenOutcome::RolledBack { pool, message }) => {
+                pool.close().await;
+                return Err(format!(
+                    "{message} — a disputa segue pendente, escolha de novo depois\
+                 {AFTER_POOL_CLOSED_SUFFIX}"
+                ));
+            }
+            // Sem salvaguarda (primeira restauração deste aparelho) ou a própria reversão também
+            // falhou: nenhum pool utilizável sobra — mesmo raciocínio de antes, reiniciar é a única
+            // saída.
+            Err(fatal) => return Err(format!("{fatal}{AFTER_POOL_CLOSED_SUFFIX}")),
+        };
     let checked_out_at = chrono::Utc::now().to_rfc3339();
     let adopt_result = state::adopt_after_restore(
         &new_pool,
@@ -1854,6 +1883,147 @@ mod tests {
         let reopened = checkout::open_migrated_pool(&db_path).await.unwrap();
         let state_after = state::load_or_init(&reopened).await.unwrap();
         assert_eq!(state_after.base_sequence, 0);
+        reopened.close().await;
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Espelha `build_remote_db_bytes`, mas corrompe o checksum da PRIMEIRA migração do banco
+    /// remoto antes de ler os bytes: o arquivo continua um SQLite íntegro de verdade (passa o
+    /// `PRAGMA integrity_check` de `validate_downloaded_db` normalmente — ele não olha o
+    /// CONTEÚDO de `_sqlx_migrations`, só a estrutura das páginas), mas `sqlx::migrate!().run()`
+    /// recusa reabrir porque uma migração já aplicada não bate mais com o arquivo `.sql` local
+    /// (`VersionMismatch`). É o jeito determinístico de reproduzir, de ponta a ponta com HTTP
+    /// mockado, a mesma classe de falha que a issue #451 descreve como "I/O transitório, disco
+    /// cheio na migração": a troca de arquivo (`swap_active_db_atomically`) já teve sucesso, mas
+    /// `open_migrated_pool` falha ao reabrir o conteúdo recém-trocado.
+    async fn build_remote_db_bytes_that_wont_reopen(
+        dir: &std::path::Path,
+        marker: &str,
+    ) -> Vec<u8> {
+        let remote_path = dir.join(format!("remote-broken-{}.db", uuid::Uuid::new_v4()));
+        let remote_pool = checkout::open_migrated_pool(&remote_path).await.unwrap();
+        crate::commands::app_setting_set(&remote_pool, "restore_marker", marker)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE _sqlx_migrations SET checksum = X'00' \
+             WHERE version = (SELECT MIN(version) FROM _sqlx_migrations)",
+        )
+        .execute(&remote_pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM snapshot_state")
+            .execute(&remote_pool)
+            .await
+            .unwrap();
+        remote_pool.close().await;
+        std::fs::read(&remote_path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn resolve_use_remote_rolls_back_to_the_local_safeguard_when_the_remote_content_wont_reopen()
+     {
+        // Regressão da issue #451: `swap_active_db_atomically` já trocou o arquivo pelo conteúdo
+        // do outro aparelho quando `open_migrated_pool` falha ao reabri-lo — a mesma janela que
+        // `checkout::reopen_after_swap_or_rollback` cobre no check-out do boot
+        // (`reopen_after_swap_or_rollback_falls_back_to_the_safeguard_when_the_new_content_wont_open`).
+        // Antes desta correção, `resolve_conflict_use_remote_core` não chamava a reversão
+        // automática: o banco ativo ficava preso no conteúdo quebrado, mesmo com uma salvaguarda
+        // íntegra do conteúdo local ao lado, pronta para reverter.
+        let dir = conflict_test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = checkout::open_migrated_pool(&db_path).await.unwrap();
+        let local_schema: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        crate::commands::app_setting_set(&pool, "local_only_marker", "conteudo-local-de-antes")
+            .await
+            .unwrap();
+
+        let remote_bytes =
+            build_remote_db_bytes_that_wont_reopen(&dir, "nunca-deve-aparecer-ativo").await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 9,
+            created_at: "2026-08-13T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: local_schema,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/snap-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(remote_bytes)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let err = resolve_conflict_use_remote_core(pool, &db_path, &drive, 9)
+            .await
+            .expect_err(
+                "reabrir o conteúdo do outro aparelho falha — mas isso ainda é uma \
+                          reversão bem-sucedida para a salvaguarda, não um caminho feliz",
+            );
+        // Reversão automática é diferente de uma falha crua: a mensagem precisa dizer o que
+        // aconteceu, e ainda assim exige reiniciar (nenhum caminho desta função devolve um pool
+        // utilizável ao estado gerenciado do Tauri no meio da sessão — nem o feliz).
+        assert!(
+            err.contains("revertido") || err.contains("reversão"),
+            "erro deveria comunicar a reversão automática: {err}"
+        );
+        assert!(err.ends_with(AFTER_POOL_CLOSED_SUFFIX), "erro: {err}");
+
+        // O arquivo ativo, reaberto do zero, precisa ser o conteúdo LOCAL de antes da troca — não
+        // o remoto quebrado, e não um banco vazio criado do nada por `create_if_missing`.
+        let reopened = checkout::open_migrated_pool(&db_path).await.unwrap();
+        let local_marker = crate::commands::app_setting_get(&reopened, "local_only_marker")
+            .await
+            .unwrap();
+        assert_eq!(
+            local_marker.as_deref(),
+            Some("conteudo-local-de-antes"),
+            "a reversão precisa restaurar o conteúdo local, não deixar o banco quebrado nem vazio"
+        );
+        let remote_marker = crate::commands::app_setting_get(&reopened, "restore_marker")
+            .await
+            .unwrap();
+        assert!(
+            remote_marker.is_none(),
+            "o conteúdo do remoto quebrado nunca pode ficar ativo"
+        );
         reopened.close().await;
 
         std::fs::remove_dir_all(&dir).ok();
