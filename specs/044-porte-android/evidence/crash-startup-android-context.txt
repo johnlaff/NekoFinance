@@ -1,0 +1,42 @@
+Evidência de dispositivo real (SM-S926B via ADB) — captura de logcat, dados sintéticos.
+
+Contexto: ao instalar o build atual da main (com o cofre Android da PR #444) no aparelho e
+abrir o app, ele derrubava 100% das vezes logo na abertura — antes de qualquer tela aparecer.
+Ninguém tinha rodado esse build específico no aparelho ainda (o APK que estava instalado era
+anterior à PR #444: lastUpdateTime 2026-08-12 20:17:40, e a #444 só mergeou às 23:20:08).
+
+=== ANTES DA CORREÇÃO (secret_vault::install_platform_backend() no topo de run()) ===
+
+08-13 01:21:48.703  7022  7048 I RustStdoutStderr: thread '<unnamed>' (7049) panicked at
+  /home/john/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ndk-context-0.1.1/src/lib.rs:72:30:
+08-13 01:21:48.703  7022  7048 I RustStdoutStderr: android context was not initialized
+--------- beginning of crash
+08-13 01:21:48.704  7022  7049 F libc    : Fatal signal 6 (SIGABRT) ... pid 7022 (o.finance.debug)
+  backtrace: neko_finance_lib::stop_unwind -> neko_finance_lib::_start_app ->
+  tao::platform_impl::platform::ndk_glue::create::{{closure}}
+
+=== TENTATIVA 2 (chamada movida para dentro do .setup(), ainda cedo demais) ===
+
+08-13 01:29:02.769  7798  7838 F libc    : Fatal signal 6 (SIGABRT) ... Thread-2, pid 7798
+08-13 01:29:02.770  7798  7837 I RustStdoutStderr: thread '<unnamed>' (7838) panicked at
+  .../ndk-context-0.1.1/src/lib.rs:72:30: android context was not initialized
+  (mesmo stack: _start_app -> .setup() -> install_platform_backend)
+
+=== CAUSA RAIZ ===
+
+`tao`'s ndk_glue::create() spawna a thread que roda `main()` (nosso `run()`) ANTES de
+`onActivityCreate()` (callback JNI separado, disparado pela activity Kotlin) terminar de
+popular o `ndk-context` global. Qualquer código que rode no caminho síncrono de `run()`/`.setup()`
+— inclusive o check-out do snapshot ao abrir (spec 043), que já busca o token do Google logo na
+primeira linha útil do `.setup()` — pode vencer essa corrida e achar o contexto ainda vazio.
+
+=== DEPOIS DA CORREÇÃO (registro preguiçoso em platform_vault() + sondagem com catch_unwind) ===
+
+08-13 01:52:30 — app instalado, aberto, PID 10865 estável por 28s+ sem nenhum panic/crash em
+logcat (grep por "panicked at|beginning of crash|FATAL" vazio). Nenhuma linha de fallback
+"[secret_vault] contexto Android não ficou pronto" — a sondagem teve sucesso dentro do
+orçamento (até 40 tentativas de 50ms).
+
+Arquivo alterado: src-tauri/src/secret_vault.rs (registro do back-end Android movido de
+"uma vez, cedo em run()" para "preguiçoso, na primeira chamada real de platform_vault(),
+com sondagem bounded do contexto JNI antes de chamar android_keyring").

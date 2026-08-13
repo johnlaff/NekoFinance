@@ -2793,6 +2793,7 @@ dependencies = [
  "hex",
  "keyring",
  "mockito",
+ "ndk-context",
  "notify-rust",
  "oauth2",
  "open",

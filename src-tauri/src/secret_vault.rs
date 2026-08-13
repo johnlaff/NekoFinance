@@ -5,10 +5,10 @@
 //! módulo é o adapter: a única implementação é [`KeyringVault`], uma casca fina sobre
 //! `keyring::Entry` — e essa mesma casca serve o Android também. A seleção por `cfg(target_os)`
 //! (ADR-0014) não troca a STRUCT, troca qual back-end o `keyring::Entry` fala por baixo:
-//! [`install_platform_backend`] registra, uma vez no início do processo, o `CredentialBuilder`
-//! Android (crate `android-keyring`, gerando a chave AES não exportável no `AndroidKeyStore` via
-//! JNI e cifrando o valor numa `SharedPreferences` privada) antes de qualquer `KeyringVault` ser
-//! usado — no desktop essa chamada é no-op, o keyring já nasce com o back-end nativo do SO.
+//! [`platform_vault`] registra, na primeira chamada, o `CredentialBuilder` Android (crate
+//! `android-keyring`, gerando a chave AES não exportável no `AndroidKeyStore` via JNI e cifrando
+//! o valor numa `SharedPreferences` privada) — no desktop essa chamada é no-op, o keyring já
+//! nasce com o back-end nativo do SO.
 
 /// Gravar, ler e apagar um segredo por serviço + usuário — o mesmo vocabulário que `keyring::Entry`
 /// já usa, para a implementação desktop ser uma casca fina sobre o crate existente.
@@ -53,28 +53,63 @@ impl SecretVault for KeyringVault {
 }
 
 /// O cofre da plataforma corrente. Sempre [`KeyringVault`] — a variação por plataforma vive no
-/// back-end que [`install_platform_backend`] registra no `keyring`, não numa struct alternativa.
+/// back-end que a primeira chamada registra no `keyring`, não numa struct alternativa.
+///
+/// O registro é PREGUIÇOSO (`Once`): o primeiro consumidor real (o check-out do snapshot ao
+/// abrir o app, que já dispara isto de dentro do próprio `.setup()` do builder, buscando o token
+/// do Google) é quem paga o custo, uma vez. [`install_platform_backend`] espera o contexto ficar
+/// pronto em vez de assumir que já está — ver o racional lá.
 pub(crate) fn platform_vault() -> &'static dyn SecretVault {
     static VAULT: KeyringVault = KeyringVault;
+    static INSTALL_PLATFORM_BACKEND: std::sync::Once = std::sync::Once::new();
+    INSTALL_PLATFORM_BACKEND.call_once(install_platform_backend);
     &VAULT
 }
 
 /// Registra o back-end Android do `keyring` (AndroidKeyStore + SharedPreferences via JNI puro,
-/// sem plugin Kotlin — a leitura do contexto JNI vem de `ndk-context`, já inicializado pelo
-/// runtime mobile do Tauri antes de `run()` executar). Chame UMA vez, o quanto antes em `run()`,
-/// antes de qualquer `platform_vault()` ser usado — `token_store`/`mia::key_store` podem carregar
-/// um segredo já na abertura do app (sync em segundo plano). No-op em qualquer outra plataforma:
-/// o keyring já nasce com o back-end nativo do SO (Keychain/Credential Manager/Secret Service).
+/// sem plugin Kotlin — a leitura do contexto JNI vem de `ndk-context`). Chamada só por
+/// [`platform_vault`], preguiçosamente — nunca direto. No-op em qualquer outra plataforma: o
+/// keyring já nasce com o back-end nativo do SO (Keychain/Credential Manager/Secret Service).
 ///
-/// Nota de risco: `android-keyring` se declara "Experimental" — é a única integração Android para
-/// o `keyring` crate hoje (`keyring` 3.x não tem braço Android próprio) e usa a API nativa do
-/// AndroidKeyStore por baixo (não é uma cifra própria do crate), mas ainda não tem o histórico de
-/// produção do resto da pilha. O contrato compila e roda no alvo real (`aarch64-linux-android`);
-/// gravar/ler/apagar um segredo de verdade só se prova com o app rodando no aparelho — um cofre
-/// não exercido assim é uma lacuna, não uma prova, mesmo com o binário compilando limpo.
-pub(crate) fn install_platform_backend() {
+/// No Android, a activity nativa começa a rodar `run()` numa thread própria ANTES de o laço de
+/// eventos do `tao` terminar de registrar o contexto JNI (`ndk-context`) — uma corrida do próprio
+/// bootstrap mobile do Tauri, não de quando o Neko decide chamar isto. O `.setup()` do builder
+/// não escapa da mesma corrida: o check-out do snapshot ao abrir busca o token do Google logo na
+/// primeira linha útil dele, síncrono na mesma thread que roda `run()` — cedo demais para supor o
+/// contexto pronto. Por isso sondamos o contexto com `catch_unwind` em vez de assumir pronto — o
+/// estado é monotônico (uma vez registrado pela activity, só some quando ela é destruída), então
+/// uma sondagem que teve sucesso nunca regride; só a primeira tentativa é incerta.
+fn install_platform_backend() {
     #[cfg(target_os = "android")]
     {
+        const MAX_ATTEMPTS: u32 = 40;
+        const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+        // O hook padrão imprimiria o traço de pânico da SONDAGEM a cada tentativa — ruído de
+        // pânico esperado, não uma falha real, então ele fica mudo enquanto sondamos.
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let mut ready = false;
+        for attempt in 0..MAX_ATTEMPTS {
+            if std::panic::catch_unwind(ndk_context::android_context).is_ok() {
+                ready = true;
+                break;
+            }
+            if attempt + 1 < MAX_ATTEMPTS {
+                std::thread::sleep(RETRY_INTERVAL);
+            }
+        }
+        std::panic::set_hook(previous_hook);
+
+        if !ready {
+            eprintln!(
+                "[secret_vault] contexto Android (ndk-context) não ficou pronto em {}ms; \
+                 segredos caem no fallback de arquivo cifrado (NEKO_INSECURE_FILE_FALLBACK)",
+                u64::from(MAX_ATTEMPTS) * RETRY_INTERVAL.as_millis() as u64
+            );
+            return;
+        }
+
         if let Err(error) = android_keyring::set_android_keyring_credential_builder() {
             eprintln!(
                 "[secret_vault] falha ao registrar o cofre do AndroidKeyStore ({error}); \

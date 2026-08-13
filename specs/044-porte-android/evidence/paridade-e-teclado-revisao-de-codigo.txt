@@ -1,0 +1,45 @@
+Evidência de leitura de código (não substitui a caminhada interativa no aparelho — ver o corpo
+do PR para o que ainda depende de desbloquear a tela). Guardada aqui porque embasa o veredito
+dos critérios 3 e 4 sem depender do dispositivo.
+
+=== Critério 3 — consentimento/recibo com paridade de comportamento ===
+
+src/screens/SettingsScreen.tsx: a seção de consentimento da Mia (linhas ~124-231, o componente
+que grava a chave via setMiaApiKeyCmd e concede/revoga via grantMiaConsentCmd/revokeMiaConsentCmd)
+não tem NENHUM branch `isAndroid`/`isTauri` dentro de si — é o mesmo componente React, mesmo
+texto, mesma sequência de telas nos dois alvos. `isAndroid` só aparece em dois pontos do arquivo
+inteiro: o rótulo de rodapé ("Tauri Android" vs "Tauri desktop") e o aviso de mitigação do
+segundo deep link do OAuth (upstream tauri-apps/plugins-workspace#2397) — nenhum dos dois toca
+consentimento ou recibo. Paridade é estrutural (mesmo componente), não uma alegação.
+
+src/screens/SettingsScreen.android.test.tsx já cobre o rótulo de plataforma e o aviso de deep
+link em isolamento (vi.mock isAndroid: true); não há teste Android-específico de
+consentimento/recibo porque não há CÓDIGO Android-específico ali para testar — o mesmo teste
+desktop (SettingsScreen.test.tsx) já exercita o componente compartilhado.
+
+O recibo das respostas locais (CopilotScreen.tsx, componente <Receipt>/<CollapsedReceipt> do
+design system) é o mesmo import em qualquer plataforma — nenhuma variação por `isAndroid`/`isTauri`
+existe no arquivo da tela da conversa.
+
+=== Critério 4 — teclado e rolagem no viewport móvel ===
+
+index.html:9-11 já declara `interactive-widget=resizes-content` no viewport meta — mecanismo
+padrão (2026) para o teclado ENCOLHER o layout via `dvh` em vez de sobrepor o campo focado.
+É uma tag de documento, não uma tela específica: cobre CopilotScreen (a tela da Mia) do mesmo
+jeito que cobre qualquer outra tela do app, incluindo "Novo lançamento" — cuja captura já
+versionada em specs/044-porte-android/evidence/teclado-sem-sobreposicao.png (PR #441, mesmo
+mecanismo) mostra o teclado abrindo sem cobrir o campo focado no aparelho real. Essa captura é
+de outra tela (não a da Mia) — evidência de que o MECANISMO funciona no aparelho, não prova
+direta da tela da Mia especificamente.
+
+src/screens/CopilotScreen.tsx:
+- `scrollerOf()` (linha ~493) rola o CONTÊINER pai mais próximo com overflow, não a página —
+  evita o dock flutuante (composer) tampar a última resposta, um bug já corrigido e coberto por
+  comentário de racional na spec da onda #191/#224 (Horizonte).
+- `pointerViewport()` (linha ~485) suprime o autofoco em toque (só foca automaticamente com
+  `matchMedia(min-width: 701px)`, ou seja, teclado físico) — evita abrir o teclado virtual por
+  cima da saudação sem o usuário ter pedido, exatamente o tipo de defeito que o critério 4 cobre.
+
+Nenhuma dessas três peças (viewport meta, scrollerOf, pointerViewport) é nova deste PR — são
+código já existente e testado (CopilotScreen.test.tsx). O que falta é a confirmação visual no
+aparelho real com o teclado do sistema aberto de verdade, que depende da tela desbloqueada.
