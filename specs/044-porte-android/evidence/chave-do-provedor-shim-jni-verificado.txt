@@ -1,0 +1,91 @@
+Shim Kotlin+JNI para o `ndk-context` (causa raiz documentada em
+chave-do-provedor-ndk-context-nao-inicializado.txt) — critério 1 da #430 verificado de ponta a
+ponta no aparelho de referência (SM-S926B, 2026-08-13): cadastro de chave pela UI real,
+persistência através de um `kill`/reabertura de processo, e ausência de texto plano no
+armazenamento.
+
+## O que mudou
+
+  1. `src-tauri/gen/android/app/src/main/java/app/neko/finance/MainActivity.kt` — declara
+     `external fun initNdkContext(context: Context)` e chama com `this.applicationContext` em
+     `onCreate`, depois de `super.onCreate()`.
+  2. `src-tauri/src/secret_vault.rs` — `Java_app_neko_finance_MainActivity_initNdkContext`:
+     promove o Context recebido a referência GLOBAL (uma local não sobrevive à chamada nativa) e
+     chama `ndk_context::initialize_android_context` dentro de `catch_unwind` (a crate pania se
+     chamada duas vezes; a segunda chamada vira no-op silencioso).
+  3. `src-tauri/Cargo.toml` — `jni = "=0.21.1"` como dependência direta do alvo Android, pinada na
+     mesma versão que `android-keyring`/`tao` já resolvem (`cargo tree -i jni` confirma uma
+     árvore só, sem uma segunda cópia da crate).
+
+## Build e instalação
+
+`scripts/build-android.sh --debug` (JAVA_HOME apontado para o Temurin 21 via mise, ANDROID_HOME/
+NDK_HOME já exportados no perfil da máquina): termina sem erro, gera
+`app-universal-debug.apk` (317MB, debug/unstripped — não é o tamanho de uma release assinada). A
+crate `neko-finance` compila o símbolo JNI novo sem warning.
+
+Instalado com `adb install -r` a partir do caminho já pushado para `/data/local/tmp` — a rede
+sobre Tailscale entrega ~1,4MB/s, então o `push` explícito seguido de `pm install` local evita o
+timeout que um `adb install` direto do host levaria nesse link. Confirmado via
+`dumpsys package app.neko.finance.debug`:
+
+    versionCode=2001 versionName=0.2.1
+    lastUpdateTime=2026-08-13 09:24:49
+
+## Round-trip completo pela UI real
+
+Baseline limpo antes de qualquer cadastro (`run-as app.neko.finance.debug ls shared_prefs/`):
+só prefs de sistema (WebView, IDS) — nenhum arquivo do cofre.
+
+Fluxo exercido via `uiautomator dump` + toque por elemento resolvido nas `bounds` do dump (nunca
+coordenada arbitrária): Hoje → Mais telas → Configurações → rolar até Conversa → "Continuar" abre
+a porta de consentimento → campo `mia-api-key` recebe uma chave placeholder sintética
+(`sk-or-v1-000placeholder000naoereal`, nunca um segredo real) → "Registrar consentimento".
+
+Resultado imediato na UI: "Autorizada · OpenRouter e OpenAI" substitui o aviso "Falta a chave".
+Logcat capturado no instante do toque (`logcat -c` antes, dump depois): nenhuma ocorrência de
+"contexto Android (ndk-context) não ficou pronto", de "android context was not initialized" ou de
+qualquer `FATAL EXCEPTION` — a chamada ao cofre teve sucesso silencioso (o código só grava log na
+falha, ver o comentário de `install_platform_backend`).
+
+Persistência sem texto plano (`run-as app.neko.finance.debug`):
+
+    ls shared_prefs/
+    ...
+    neko-finance-mia.xml
+
+    cat shared_prefs/neko-finance-mia.xml
+    <map>
+        <string name="openrouter">DKPikU0XPClIRbSYKucxxUSxizY1YzzUwAwv+2s1btowTz/+CzGbAXdtf1CLoNww8lECSWnmR78K7tkP7xJR</string>
+    </map>
+
+    grep -c 'placeholder' shared_prefs/neko-finance-mia.xml
+    0
+
+O valor gravado é o blob cifrado pelo AndroidKeyStore (via `android-keyring`) — a substring da
+chave placeholder não aparece em lugar nenhum do arquivo.
+
+Persistência através do ciclo de vida do processo: `am force-stop` mata o processo,
+`am start` relança a `MainActivity` do zero (novo pid). Logcat filtrado por esse novo pid mostra
+o processo criado, `libneko_finance_lib.so` carregado (`nativeloader: ... ok`) e o primeiro frame
+do WebView desenhado — tudo em menos de 300ms, sem nenhuma das assinaturas de falha do
+diagnóstico original. Configurações › Conversa mostra "Autorizada · OpenRouter e OpenAI" assim
+que a tela abre, sem pedir a chave de novo — a leitura do cofre (que precisa do mesmo contexto
+JNI para decifrar via AndroidKeyStore) também teve sucesso, agora num processo que nunca tinha
+chamado `initNdkContext` antes. Screenshot em
+`config-conversa-autorizada-apos-restart.png`.
+
+## Contraste com o diagnóstico original
+
+O diagnóstico (`chave-do-provedor-ndk-context-nao-inicializado.txt`) registrou a sondagem do
+contexto falhando por mais de 4 minutos seguidos, em toda tentativa, com o app "totalmente
+interativo". Nesta sessão, entre o `Process ... created` de cada lançamento e o primeiro toque em
+"Registrar consentimento" (ou a leitura do cofre no relançamento seguinte), nenhuma tentativa de
+sondagem falhou — o shim popula o contexto em `onCreate`, antes de qualquer coisa no app ter
+chance de precisar dele.
+
+## Gates locais (fora do device, mesma sessão)
+
+    npm run check       → 1391/1391 testes Rust, lint/typecheck/build/privacy/comment-hygiene/
+                           ui-audit — EXIT=0
+    npm run privacy:scan (comando separado) → "Privacy scan passed." — EXIT=0

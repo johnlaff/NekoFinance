@@ -8,7 +8,9 @@
 //! [`platform_vault`] registra, na primeira chamada, o `CredentialBuilder` Android (crate
 //! `android-keyring`, gerando a chave AES não exportável no `AndroidKeyStore` via JNI e cifrando
 //! o valor numa `SharedPreferences` privada) — no desktop essa chamada é no-op, o keyring já
-//! nasce com o back-end nativo do SO.
+//! nasce com o back-end nativo do SO. No Android, esse back-end depende de
+//! [`Java_app_neko_finance_MainActivity_initNdkContext`] ter rodado primeiro — a ponte JNI que o
+//! shim Kotlin de `MainActivity.onCreate` (`gen/android`) chama para popular `ndk-context`.
 
 /// Gravar, ler e apagar um segredo por serviço + usuário — o mesmo vocabulário que `keyring::Entry`
 /// já usa, para a implementação desktop ser uma casca fina sobre o crate existente.
@@ -155,6 +157,70 @@ fn install_platform_backend() -> bool {
         }
     }
     true
+}
+
+/// Ponte JNI chamada pelo shim Kotlin de `MainActivity.onCreate` (`gen/android`), depois de
+/// `super.onCreate()`, com o Application Context — a única coisa nesta árvore de dependências
+/// que popula o contexto que [`install_platform_backend`] sonda. Regressão a montante: o `tao`
+/// 0.35.x nunca migrou de `ndk-glue` para `ndk-context` (tauri-apps/tao#1220), então sem este
+/// shim `ndk_context::android_context()` nunca fica pronto e nenhum segredo Android persiste,
+/// não importa quanto a sondagem espere. Corrigida em tauri-apps/tao#1266, publicada no tao
+/// 0.36.0 (2026-07-29); removível (este item + a declaração em `MainActivity.kt`) quando o
+/// Tauri publicar uma versão que carregue tao >= 0.36 (verificado 2026-08: `tauri` 2.11.5 ainda
+/// resolve tao 0.35.3). Padrão do `keyring-demo` do próprio `android-keyring`
+/// (open-source-cooperative/keyring-demo).
+///
+/// `ndk_context::initialize_android_context` PANICA se chamado duas vezes no processo (o global
+/// que guarda não distingue "já inicializado por mim" de "já inicializado por outra via") — o
+/// `catch_unwind` torna essa segunda chamada um no-op silencioso em vez de derrubar o processo,
+/// o que é o que deixa este shim conviver, sem pressa, com um `tao` futuro que passe a
+/// inicializar o mesmo contexto por conta própria.
+#[cfg(target_os = "android")]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_neko_finance_MainActivity_initNdkContext(
+    env: jni::JNIEnv,
+    _class: jni::objects::JObject,
+    context: jni::objects::JObject,
+) {
+    // Referência GLOBAL, não a local que a JVM empresta como argumento: uma referência local só
+    // é garantida válida durante ESTA chamada nativa — `ndk_context` guarda o ponteiro cru sem
+    // dono, para ser lido em qualquer chamada futura ao cofre, muito depois deste `onCreate`
+    // retornar.
+    let global_context = match env.new_global_ref(&context) {
+        Ok(reference) => reference,
+        Err(error) => {
+            eprintln!("[secret_vault] initNdkContext: new_global_ref falhou ({error})");
+            return;
+        }
+    };
+    let Ok(vm) = env.get_java_vm() else {
+        eprintln!("[secret_vault] initNdkContext: get_java_vm falhou; contexto não registrado");
+        return;
+    };
+    let vm_ptr = vm.get_java_vm_pointer().cast::<std::ffi::c_void>();
+    let context_ptr = global_context.as_obj().as_raw().cast::<std::ffi::c_void>();
+
+    // O hook padrão imprimiria o traço de pânico da segunda chamada a cada vez — ruído esperado
+    // (ver o racional acima), não uma falha real.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let already_initialized = std::panic::catch_unwind(|| unsafe {
+        ndk_context::initialize_android_context(vm_ptr, context_ptr);
+    })
+    .is_err();
+    std::panic::set_hook(previous_hook);
+
+    if already_initialized {
+        // Esta referência global nunca chegou a ser usada por `ndk_context` — sai de escopo e
+        // libera normalmente.
+        return;
+    }
+
+    // O sucesso troca de dono: `ndk_context` não tem `Drop`, então a referência global precisa
+    // sobreviver ao processo inteiro, senão o ponteiro que ele guarda passa a apontar para uma
+    // referência já deletada pela JVM na próxima leitura do cofre.
+    std::mem::forget(global_context);
 }
 
 /// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO lido tanto por `mia::key_store` quanto por

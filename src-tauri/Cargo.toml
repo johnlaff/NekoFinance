@@ -82,16 +82,21 @@ fs4 = "=1.1.0"
 # O cofre de segredos (ADR-0014, secret_vault.rs) não tem braço Android — `keyring` cobre
 # apple-native/windows-native/sync-secret-service e nada mais. Este crate registra um
 # CredentialBuilder para o mesmo `keyring::Entry` já usado pelo desktop, gerando a chave AES não
-# exportável no AndroidKeyStore (via JNI) e cifrando o valor numa SharedPreferences privada — sem
-# plugin Kotlin próprio, porque a leitura do contexto JNI vem de `ndk-context`. Rótulo
-# "Experimental" no próprio crate: risco documentado, não uma implementação de crypto própria — a
-# cifra é a API nativa do Keystore. `ndk-context` pinada na mesma versão que `android-keyring` e
-# `tao` já resolvem (checar `cargo tree -i ndk-context` a cada bump) — é o mesmo estado global dos
-# três, e `secret_vault::install_platform_backend` precisa sondá-lo diretamente antes de chamar o
+# exportável no AndroidKeyStore (via JNI) e cifrando o valor numa SharedPreferences privada — a
+# leitura do contexto JNI vem de `ndk-context`, populado pelo shim Kotlin de `MainActivity`
+# (gen/android) via a ponte JNI em `secret_vault.rs`. Rótulo "Experimental" no próprio crate:
+# risco documentado, não uma implementação de crypto própria — a cifra é a API nativa do
+# Keystore. `ndk-context` pinada na mesma versão que `android-keyring` e `tao` já resolvem
+# (checar `cargo tree -i ndk-context` a cada bump) — é o mesmo estado global dos três, e
+# `secret_vault::install_platform_backend` precisa sondá-lo diretamente antes de chamar o
 # builder do keyring (ver o comentário do módulo).
 [target.'cfg(target_os = "android")'.dependencies]
 android-keyring = "=0.2.0"
 ndk-context = "=0.1.1"
+# Dep direta só para a ponte JNI de `secret_vault.rs` (`Java_..._initNdkContext`) que POPULA o
+# `ndk-context` acima — pinada na mesma versão que `android-keyring`/`tao` já resolvem
+# (checar `cargo tree -i jni` a cada bump) para não duplicar a crate no grafo.
+jni = "=0.21.1"
 
 [dev-dependencies]
 # Borda HTTP mockada para o transporte do snapshot no Drive (spec 043) — sobe um servidor local
