@@ -33,6 +33,15 @@ existente); um manifest de sequência monotônica por aparelho decide quem pode 
   própria, fora do escopo deste mecanismo.
 - O transporte fica atrás do `appDataFolder` do Drive — invisível ao dono, escopo OAuth estreito
   (`drive.appdata`, não acesso aos arquivos do Google Drive do usuário).
+- **Manifest com o próprio `device_id` só é "eu mesmo" dentro de uma janela estreita**: o
+  check-out trata um manifest remoto com o `device_id` deste aparelho como o check-in que morreu
+  entre o upload confirmado e a gravação do estado local — e só avança a base sem baixar nem
+  trocar arquivo — quando `remote.sequence == base_local + 1`, a largura exata dessa queda.
+  Qualquer outra sequência com o mesmo id passa pelo veredito normal do árbitro (restauração
+  visível). A identidade pode colidir por um caminho fora do lease (cópia manual da pasta do app,
+  backup local restaurado à mão sem passar pelo strip do export) — nesse caso as duas instalações
+  são, de fato, aparelhos distintos que só compartilham o rótulo, e adotar qualquer sequência à
+  frente sem restaurar apagaria essa distinção em silêncio.
 - **Convergência é total, não por assunto**: o snapshot é o banco inteiro, então nada nele
   diverge entre aparelhos — inclusive o histórico de conversas da Mia, que mora na mesma tabela
   SQLite que o resto do registro. As únicas exceções são as duas fronteiras estruturais do
