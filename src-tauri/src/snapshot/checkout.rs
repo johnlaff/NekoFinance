@@ -563,39 +563,41 @@ async fn checkout_on_open_with_deadline(
 /// O gancho de verdade que `lib.rs` chama na abertura do app: resolve o cliente do Drive via
 /// [`resolve_drive_client_best_effort`] e SILENCIA os motivos legítimos de não tentar — nunca
 /// conectou, sem client id configurado, escopo `drive.appdata` ainda não concedido. Nenhum desses
-/// é uma falha do check-out em si, é "sync ainda não configurado" (offline pleno). Uma falha
+/// é uma falha do check-out em si, é "sync ainda não configurado" (offline pleno) — e sem nada
+/// para tentar, nenhum aviso de uma tentativa ANTERIOR se sustenta (limpa junto). Uma falha
 /// DEPOIS de decidir tentar (rede ao resolver o token, rede/integridade dentro de
 /// `checkout_on_open`, ou o teto de espera acima estourando) continua reportada em `outcome`,
-/// nunca engolida — só a decisão de TENTAR é best-effort, não o resultado da tentativa.
+/// nunca engolida — só a decisão de TENTAR é best-effort, não o resultado da tentativa. Por isso
+/// os três caminhos (não configurado, resolver falhou de verdade, `checkout_on_open_with_deadline`
+/// rodou) convergem para o MESMO registro de desfecho abaixo, em vez de cada um sair cedo — a
+/// diferença entre "nada a avisar" e "chegou a falhar" não pode depender de qual ramo lembrou de
+/// gravar.
 pub async fn checkout_on_open_best_effort(
     pool: SqlitePool,
     db_path: &Path,
     app_dir: &Path,
 ) -> Result<CheckoutResult, String> {
-    let drive = match resolve_drive_client_best_effort(&pool, app_dir).await {
-        Ok(Some(drive)) => drive,
-        Ok(None) => {
-            return Ok(CheckoutResult {
-                pool,
-                outcome: Ok(CheckoutOutcome::NothingToDo),
-            });
+    let result = match resolve_drive_client_best_effort(&pool, app_dir).await {
+        Ok(Some(drive)) => {
+            checkout_on_open_with_deadline(pool, db_path, &drive, CHECKOUT_ON_OPEN_TIMEOUT).await?
         }
-        Err(e) => {
-            return Ok(CheckoutResult {
-                pool,
-                outcome: Err(e),
-            });
-        }
+        Ok(None) => CheckoutResult {
+            pool,
+            outcome: Ok(CheckoutOutcome::NothingToDo),
+        },
+        Err(e) => CheckoutResult {
+            pool,
+            outcome: Err(e),
+        },
     };
-    let result =
-        checkout_on_open_with_deadline(pool, db_path, &drive, CHECKOUT_ON_OPEN_TIMEOUT).await?;
 
     // Persiste o desfecho para a UI de Conexão (ADR-0015): a recusa por schema mais
-    // novo e a falha de rede/integridade merecem um aviso na tela, não só uma linha de log que o
-    // dono nunca vê. `NothingToDo`/`Restored`/`CaughtUpOwnSequence` são sucesso — limpam qualquer
-    // aviso de uma tentativa ANTERIOR, para ele não sobreviver a um check-out que deu certo depois.
-    // Melhor esforço: uma falha ao GRAVAR o desfecho não pode derrubar o check-out em si, que já
-    // rodou até aqui — só loga e segue com o `pool` que `checkout_on_open` devolveu.
+    // novo e a falha de rede/integridade/resolução do cliente merecem um aviso na tela, não só uma
+    // linha de log que o dono nunca vê. `NothingToDo`/`Restored`/`CaughtUpOwnSequence` são sucesso
+    // — limpam qualquer aviso de uma tentativa ANTERIOR, para ele não sobreviver a um check-out que
+    // deu certo (ou que nem tinha o que tentar) depois. Melhor esforço: uma falha ao GRAVAR o
+    // desfecho não pode derrubar o check-out em si, que já rodou até aqui — só loga e segue com o
+    // `pool` do resultado.
     let (outcome_tag, outcome_detail) = outcome_warning_fields(&result.outcome);
     if let Err(e) = state::record_checkout_outcome(
         &result.pool,
@@ -1079,6 +1081,68 @@ mod tests {
             .await
             .expect("best-effort nunca falha quando não há como tentar");
         assert_eq!(result.outcome, Ok(CheckoutOutcome::NothingToDo));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn best_effort_clears_a_pending_warning_when_boot_has_nothing_configured_to_retry() {
+        // Item 5 da issue #446: sem client id configurado não existe check-out para "tentar de
+        // novo na próxima abertura" — um aviso de uma tentativa ANTERIOR não pode sobreviver a um
+        // boot que nem chega a decidir tentar.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        state::load_or_init(&pool).await.unwrap();
+        state::record_checkout_outcome(&pool, Some("error"), Some("tentativa anterior"))
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        checkout_on_open_best_effort(pool.clone(), &db_path, &app_dir)
+            .await
+            .expect("best-effort nunca falha quando não há como tentar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.last_checkout_outcome, None);
+        assert_eq!(after.last_checkout_outcome_detail, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn best_effort_persists_an_error_outcome_when_the_client_resolver_really_fails() {
+        // Diferente de "nunca configurado" (silencioso): um token PRESENTE mas ILEGÍVEL é uma
+        // tentativa que decidiu tentar e falhou de verdade — a UI de Conexão precisa saber disso,
+        // não só um `eprintln!` que o dono nunca vê.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        // A linha singleton já existe (bookkeeping de um boot anterior) — o mesmo pressuposto
+        // realista do teste do aviso pendente acima: um aparelho recém-instalado, sem NENHUM
+        // bookkeeping prévio, não tem como já ter um client id + token corrompido configurados.
+        state::load_or_init(&pool).await.unwrap();
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(
+            app_dir.join("oauth-token.enc"),
+            b"nao sou um token cifrado valido",
+        )
+        .unwrap();
+
+        let result = checkout_on_open_best_effort(pool.clone(), &db_path, &app_dir)
+            .await
+            .expect("best-effort não propaga a falha do resolver como Err do próprio fn");
+        assert!(
+            result.outcome.is_err(),
+            "token ilegível é uma falha real, não 'nada a fazer'"
+        );
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.last_checkout_outcome.as_deref(), Some("error"));
+        assert!(after.last_checkout_outcome_detail.is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
