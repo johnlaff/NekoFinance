@@ -134,8 +134,9 @@ pub async fn checkout_on_open(
     // "nossa": duas instalações podem compartilhar identidade por um caminho lateral (cópia
     // manual da pasta do app; backup local restaurado à mão, que não passa pelo `strip` do
     // export) — nesse caso o manifest pertence de fato a OUTRO aparelho que só usa o mesmo
-    // rótulo, e cai no fluxo normal abaixo (restauração de verdade, com o aviso visível de
-    // sempre), preservando a convergência entre os dois.
+    // rótulo, e cai no fluxo normal abaixo (restauração de verdade, registrada na linha
+    // "Última leitura do Drive" e com a salvaguarda local), preservando a convergência entre
+    // os dois.
     if remote_manifest.device_id == local_state.device_id
         && remote_manifest.sequence == local_state.base_sequence + 1
     {
