@@ -2,14 +2,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockCommands, mockInvoke } from "../../test/commands";
-import type {
-  DriveConflictDetails,
-  DriveConflictGesture,
+import {
+  gestureKeys,
+  type DriveConflictDetails,
+  type DriveConflictGesture,
 } from "./snapshotConflictView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-import { gestureKeys, SnapshotConflictScreen } from "./SnapshotConflictScreen";
+import { SnapshotConflictScreen } from "./SnapshotConflictScreen";
 import {
   closeSnapshotConflict,
   openSnapshotConflict,

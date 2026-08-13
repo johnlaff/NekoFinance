@@ -14,6 +14,25 @@ import { syncRecencyLabel } from "../../lib/syncRecency";
 
 export type { DriveConflictChoice, DriveConflictDetails, DriveConflictGesture };
 
+/** Chave estável por conteúdo para as linhas da lista de gestos: o gesto não tem id próprio e
+ *  dois gestos idênticos no mesmo segundo são possíveis — o sufixo de ocorrência desambigua sem
+ *  depender do índice de render. `JSON.stringify` do array (nunca `join("|")`): `source_sheet` é
+ *  dado do usuário e pode conter "|", o que colidiria duas linhas distintas na mesma chave. */
+export function gestureKeys(gestures: DriveConflictGesture[]): string[] {
+  const seen = new Map<string, number>();
+  return gestures.map((gesture) => {
+    const base = JSON.stringify([
+      gesture.at,
+      gesture.event_type,
+      gesture.entity_type,
+      gesture.source_sheet ?? "",
+    ]);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}|${n}`;
+  });
+}
+
 export function fetchSnapshotConflictDetails(
   clientId: string,
   clientSecret?: string,
