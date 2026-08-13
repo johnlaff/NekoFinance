@@ -81,8 +81,13 @@ pub(crate) async fn run_checkin_attempt_core(
         return Ok(false);
     }
 
-    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await else {
-        return Ok(false);
+    let drive = match resolve_drive_client_best_effort(pool, app_dir).await {
+        Ok(Some(drive)) => drive,
+        Ok(None) => return Ok(false),
+        Err(e) => {
+            eprintln!("[snapshot/checkin:{trigger:?}] {e}");
+            return Ok(false);
+        }
     };
 
     // Serializa contra import/sync de fundo e comandos manuais no pool de 1 conexão — o MESMO

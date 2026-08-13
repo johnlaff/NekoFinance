@@ -197,6 +197,19 @@ pub(crate) fn swap_active_db_atomically(
     Ok(safeguard)
 }
 
+/// Reverte `active_db` para o conteúdo da salvaguarda depois que REABRIR o banco recém-trocado
+/// falhou: sobrescreve `active_db` com uma CÓPIA da salvaguarda (nunca apaga a salvaguarda em si —
+/// se a reabertura falhar de novo, o caminho dela ainda serve para recuperação manual) e limpa
+/// sidecars `-wal`/`-shm` que a restauração abandonada possa ter deixado ao lado do arquivo novo,
+/// para a reabertura seguinte não ler um WAL órfão de um conteúdo já descartado.
+pub(crate) fn rollback_to_safeguard(safeguard: &Path, active_db: &Path) -> Result<(), String> {
+    std::fs::copy(safeguard, active_db).map_err(|e| format!("reverter para a salvaguarda: {e}"))?;
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(sidecar(active_db, suffix));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +472,45 @@ mod tests {
             1,
             "só a salvaguarda mais recente deve sobrar: {remaining:?}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rollback_to_safeguard_restores_the_previous_content_and_clears_stray_sidecars() {
+        let dir = test_dir();
+        let active = dir.join("active.db");
+        let safeguard = dir.join("active.pre-restore-test.db");
+        std::fs::write(&active, b"conteudo recem-trocado que nao abre").unwrap();
+        std::fs::write(&safeguard, b"conteudo de antes da troca").unwrap();
+        // Sidecars órfãos que a tentativa abandonada de restauração deixou ao lado do arquivo
+        // novo — precisam sumir, senão a reabertura seguinte os lê como WAL do conteúdo revertido.
+        std::fs::write(dir.join("active.db-wal"), b"wal da tentativa abandonada").unwrap();
+        std::fs::write(dir.join("active.db-shm"), b"shm da tentativa abandonada").unwrap();
+
+        rollback_to_safeguard(&safeguard, &active).expect("reversão deve suceder");
+
+        assert_eq!(
+            std::fs::read(&active).unwrap(),
+            b"conteudo de antes da troca"
+        );
+        assert!(
+            safeguard.exists(),
+            "a salvaguarda em si nunca é apagada pela reversão"
+        );
+        assert!(!dir.join("active.db-wal").exists());
+        assert!(!dir.join("active.db-shm").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rollback_to_safeguard_fails_when_the_safeguard_itself_is_unreadable() {
+        let dir = test_dir();
+        let active = dir.join("active.db");
+        let safeguard = dir.join("nao-existe.db");
+        std::fs::write(&active, b"conteudo recem-trocado").unwrap();
+
+        let err = rollback_to_safeguard(&safeguard, &active).unwrap_err();
+        assert!(err.contains("reverter para a salvaguarda"), "erro: {err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 

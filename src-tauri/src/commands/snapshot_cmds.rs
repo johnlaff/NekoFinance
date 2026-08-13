@@ -481,6 +481,10 @@ pub(crate) async fn resolve_conflict_use_remote_core(
     let db_bytes = drive.download_snapshot().await?.ok_or_else(|| {
         "Nenhum conflito pendente: o snapshot do outro aparelho sumiu do Drive.".to_string()
     })?;
+    // Mesmo raciocínio de `checkout::checkout_on_open`: o hash do conteúdo QUE ACABOU DE CHEGAR
+    // vira `last_export_sha256`, para o próximo check-in não ler "mudou" e republicar à toa um
+    // conteúdo idêntico ao que este aparelho acabou de adotar.
+    let restored_export_sha256 = hex::encode(Sha256::digest(&db_bytes));
 
     let tmp_path = db_path
         .parent()
@@ -520,6 +524,7 @@ pub(crate) async fn resolve_conflict_use_remote_core(
         &remote_manifest.device_id,
         last_checkin_at.as_deref(),
         last_checkin_device_id.as_deref(),
+        &restored_export_sha256,
     )
     .await;
     new_pool.close().await;
@@ -673,6 +678,78 @@ mod tests {
 
         let state_after = state::load_or_init(&pool).await.unwrap();
         assert_eq!(state_after.base_sequence, 1);
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checkin_right_after_a_restore_is_up_to_date_instead_of_republishing_identical_content()
+    {
+        // Sem `last_export_sha256` refletir o conteúdo recém-restaurado, ele ficaria `NULL` logo
+        // depois de toda restauração — o check-in SEGUINTE sempre leria "mudou" e republicaria um
+        // conteúdo IDÊNTICO ao que acabou de baixar, anulando o "em dia" logo após toda
+        // restauração. Simula o pós-restauração: `adopt_after_restore` com o hash do
+        // conteúdo ATUAL do banco (a mesma forma que `checkout::checkout_on_open` calcula dos
+        // bytes baixados), sem NENHUMA mudança de domínio depois disso.
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+
+        let (restored_export_sha256, _bytes) = export_candidate_snapshot(&pool, &app_dir)
+            .await
+            .expect("hash do conteúdo atual, a mesma forma que um export produziria");
+
+        state::adopt_after_restore(
+            &pool,
+            "device-local",
+            3,
+            "2026-08-13T09:00:00Z",
+            "outro-aparelho",
+            None,
+            None,
+            &restored_export_sha256,
+        )
+        .await
+        .expect("adopt_after_restore");
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 3,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de upload registrado: se o check-in tentasse republicar mesmo com o
+        // conteúdo inalterado, a chamada bateria numa rota não-mockada e o teste acusaria a
+        // diferença.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = drive_checkin_core(&pool, &app_dir, &drive)
+            .await
+            .expect("conteúdo em dia não é uma recusa, é sucesso sem publicação");
+        assert!(
+            !result.published,
+            "nada mudou desde a restauração — não deve haver publicação nova"
+        );
+        assert!(!result.info.pending_local_changes);
 
         std::fs::remove_dir_all(&app_dir).ok();
     }
