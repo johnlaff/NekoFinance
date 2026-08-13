@@ -59,6 +59,13 @@ export default defineConfig({
     // layout quebra linha diferente do baseline gerado em pt-BR.
     locale: "pt-BR",
     timezoneId: "America/Sao_Paulo",
+    // O app agora abre no tema que o SO prefere quando nada foi salvo ainda
+    // (prefers-color-scheme). O default do Playwright para colorScheme é "light";
+    // sem pinar aqui, todo teste que não seta `neko-theme` no localStorage passaria
+    // a abrir em light e divergir dos baselines "-dark" existentes. Um teste que
+    // queira exercitar o default do SO faz `page.emulateMedia({ colorScheme: ... })`
+    // por conta própria, sem tocar neste padrão.
+    colorScheme: "dark",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",

@@ -3,6 +3,17 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeToggle } from "./ThemeToggle";
 
+/** Mock mínimo de matchMedia, só para a query de prefers-color-scheme. */
+function mockPrefersColorScheme(prefersLight: boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((query: string) => ({
+      matches: query === "(prefers-color-scheme: light)" && prefersLight,
+      media: query,
+    })),
+  );
+}
+
 describe("ThemeToggle", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -102,6 +113,48 @@ describe("ThemeToggle — reveal por overlay (WAAPI em elemento real)", () => {
     expect(
       document.querySelector("[aria-hidden='true'][style*='clip-path']"),
     ).toBeNull();
+  });
+});
+
+describe("ThemeToggle — default do sistema (prefers-color-scheme)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("abre em light quando o SO prefere light e nada foi salvo ainda", async () => {
+    mockPrefersColorScheme(true);
+    render(<ThemeToggle />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Alternar para tema escuro" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("abre em dark quando o SO prefere dark e nada foi salvo ainda", async () => {
+    mockPrefersColorScheme(false);
+    render(<ThemeToggle />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Alternar para tema claro" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("a escolha explícita salva vence o prefers-color-scheme atual", async () => {
+    localStorage.setItem("neko-theme", "dark");
+    mockPrefersColorScheme(true);
+    render(<ThemeToggle />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Alternar para tema claro" }),
+      ).toBeInTheDocument(),
+    );
   });
 });
 
