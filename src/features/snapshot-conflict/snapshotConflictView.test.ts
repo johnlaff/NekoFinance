@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  AFTER_POOL_CLOSED_SUFFIX,
+  CHECKIN_REFUSED_STALE_CONFLICT,
   conflictGestureDatedLabel,
   conflictGestureTypeLabel,
   conflictRemoteDeviceLabel,
+  isAfterPoolClosedError,
+  resolveConflictErrorMessage,
 } from "./snapshotConflictView";
 import type { DriveConflictGesture } from "../../lib/api";
 
@@ -69,5 +73,65 @@ describe("conflictRemoteDeviceLabel", () => {
       schema_version: 1,
     });
     expect(label).toBe("outro aparelho (abcdef12)");
+  });
+});
+
+describe("resolveConflictErrorMessage", () => {
+  it("mostra verbatim um erro atrás do prefixo de consentimento obsoleto", () => {
+    expect(resolveConflictErrorMessage(new Error(CHECKIN_REFUSED_STALE_CONFLICT))).toBe(
+      CHECKIN_REFUSED_STALE_CONFLICT,
+    );
+  });
+
+  it("mostra verbatim um erro atrás do prefixo de restauração recusada", () => {
+    const message =
+      "Restauração recusada: o snapshot do outro aparelho foi publicado por uma versão " +
+      "mais nova do Neko Finance (schema 9 > 7) — atualize o app antes de continuar.";
+    expect(resolveConflictErrorMessage(new Error(message))).toBe(message);
+  });
+
+  it("cai no fallback calmo para um erro sem prefixo de contrato conhecido", () => {
+    const message = resolveConflictErrorMessage(
+      new Error("error returned from database: (code: 5) database is locked"),
+    );
+    expect(message).not.toContain("database is locked");
+    expect(message).toContain("banco local está ocupado");
+  });
+
+  it("erro vazio cai no fallback dedicado desta tela, nunca no genérico de outra", () => {
+    expect(resolveConflictErrorMessage(new Error(""))).toBe(
+      "Não foi possível concluir a resolução do conflito.",
+    );
+  });
+});
+
+describe("isAfterPoolClosedError", () => {
+  it("reconhece o sufixo compartilhado de todo erro pós-fechamento do pool", () => {
+    expect(
+      isAfterPoolClosedError(
+        new Error(`trocar pelo snapshot baixado: IO${AFTER_POOL_CLOSED_SUFFIX}`),
+      ),
+    ).toBe(true);
+    expect(
+      isAfterPoolClosedError(
+        new Error(
+          `adotar estado pós-restauração: banco travado${AFTER_POOL_CLOSED_SUFFIX}`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("nunca reconhece um erro que não passou do ponto de não-retorno", () => {
+    expect(isAfterPoolClosedError(new Error(CHECKIN_REFUSED_STALE_CONFLICT))).toBe(
+      false,
+    );
+    expect(
+      isAfterPoolClosedError(
+        new Error(
+          "Restauração recusada: o snapshot do outro aparelho foi publicado por uma versão " +
+            "mais nova do Neko Finance (schema 9 > 7) — atualize o app antes de continuar.",
+        ),
+      ),
+    ).toBe(false);
   });
 });

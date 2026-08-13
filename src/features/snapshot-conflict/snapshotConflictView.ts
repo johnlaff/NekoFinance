@@ -9,6 +9,7 @@ import {
   type DriveConflictGesture,
   type DriveConflictResolution,
 } from "../../lib/api";
+import { errorText, safeErrorMessage } from "../../lib/errors";
 import { syncRecencyLabel } from "../../lib/syncRecency";
 
 export type { DriveConflictChoice, DriveConflictDetails, DriveConflictGesture };
@@ -23,9 +24,56 @@ export function fetchSnapshotConflictDetails(
 export function resolveSnapshotConflictCmd(
   clientId: string,
   choice: DriveConflictChoice,
+  seenRemoteSequence: number,
   clientSecret?: string,
 ): Promise<DriveConflictResolution> {
-  return resolveDriveConflict(clientId, choice, clientSecret);
+  return resolveDriveConflict(clientId, choice, seenRemoteSequence, clientSecret);
+}
+
+/** Prefixo estável do contrato de recusa do check-in (espelha `CHECKIN_REFUSED_PREFIX` em
+ *  `src/screens/configView.ts` e `snapshot_cmds::CHECKIN_REFUSED_PULL/CONFLICT/STALE_CONFLICT`
+ *  no Rust) — reconhecido por igualdade de PREFIXO, nunca por regex sobre a frase descritiva. */
+export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
+
+/** Mensagem exata do veredito de consentimento obsoleto (`snapshot_cmds::CHECKIN_REFUSED_STALE_CONFLICT`,
+ *  Rust): o remoto avançou de novo entre a tela mostrar o conflito e o dono escolher — publicar
+ *  (`keep_local`) ou restaurar (`use_remote`) por cima do que ele nunca viu seria a mesma
+ *  sobrescrita silenciosa que o lease impede no check-in normal. A tela reconhece por igualdade
+ *  exata e recarrega os detalhes em vez de travar num erro parado. */
+export const CHECKIN_REFUSED_STALE_CONFLICT =
+  "Check-in recusado: a disputa mudou de novo desde que você abriu esta tela — veja os " +
+  "detalhes atualizados antes de escolher.";
+
+/** Prefixo estável da recusa de restauração por schema mais novo (espelha o literal usado em
+ *  `resolve_conflict_use_remote_core`, Rust) — verbatim atrás dele, nunca a frase inteira casada
+ *  por igualdade (as versões de schema variam a cada par de aparelhos). */
+export const RESTORE_REFUSED_PREFIX = "Restauração recusada: ";
+
+/** Sufixo compartilhado por todo erro que `resolve_conflict_use_remote_core` (Rust) devolve
+ *  DEPOIS de fechar o pool do banco ativo para trocar o arquivo — a partir desse ponto não há
+ *  mais pool utilizável para uma nova tentativa, então a tela nunca oferece "tentar de novo"
+ *  quando reconhece este sufixo, mesmo que a resolução tenha falhado (ver
+ *  `AFTER_POOL_CLOSED_SUFFIX`, Rust). */
+export const AFTER_POOL_CLOSED_SUFFIX = "; reinicie o app para continuar";
+
+/** Um erro do gesto de resolução veio do backend depois do ponto de não-retorno (pool já
+ *  fechado) — a única saída honesta é reiniciar o app, nunca reoferecer os botões de escolha. */
+export function isAfterPoolClosedError(error: unknown): boolean {
+  return errorText(error).trim().endsWith(AFTER_POOL_CLOSED_SUFFIX);
+}
+
+/** Mensagem verbatim só atrás de um prefixo de contrato conhecido (mesmo padrão de
+ *  `driveCheckinErrorMessage`, `src/screens/configView.ts`, PR #439); qualquer outro erro (rede,
+ *  banco ocupado, um `sqlx`/IO cru) cai no fallback calmo em vez de vazar a mensagem técnica. */
+export function resolveConflictErrorMessage(error: unknown): string {
+  const raw = errorText(error).trim();
+  if (
+    raw.startsWith(CHECKIN_REFUSED_PREFIX) ||
+    raw.startsWith(RESTORE_REFUSED_PREFIX)
+  ) {
+    return raw;
+  }
+  return safeErrorMessage(error, "Não foi possível concluir a resolução do conflito.");
 }
 
 /** `event_type` conhecidos hoje (`sync_log` só é escrito pelo import/write-back da planilha) —

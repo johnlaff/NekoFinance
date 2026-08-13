@@ -1,0 +1,16 @@
+- dialog "Conflito de sincronização entre aparelhos":
+  - heading "Os dois aparelhos mudaram desde a última vez que se falaram" [level=2]
+  - status: Isto é outro aparelho (abcdef12). As listas abaixo cobrem só importações e escritas na planilha — split, tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui. Os horários do lado do outro aparelho vêm do relógio dele, não deste.
+  - region "Gestos deste aparelho":
+    - heading "Gestos deste aparelho — perdidos se você usar o outro aparelho" [level=3]
+    - list:
+      - listitem: Escrita de volta na planilha (aba Saídas) — há 7 h
+      - listitem: /Importação da planilha \(aba Diário\) — há \d+ h/
+  - region "Gestos do outro aparelho":
+    - heading "Gestos do outro aparelho — perdidos se você mantiver este aparelho" [level=3]
+    - list:
+      - listitem: Importação da planilha (aba Cartão) — há 8 h
+  - paragraph: Decidir depois fecha esta tela sem escolher — o conflito volta a aparecer no próximo check-in.
+  - button "Decidir depois"
+  - button "Usar o outro aparelho"
+  - button "Manter este aparelho"

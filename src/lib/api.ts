@@ -1239,12 +1239,18 @@ export interface DriveConflictResolution {
 export function resolveDriveConflict(
   clientId: string,
   choice: DriveConflictChoice,
+  // A sequência do manifest remoto que a TELA mostrou (`DriveConflictDetails.remote_manifest.sequence`)
+  // — o backend recusa a resolução quando o remoto de fato encontrado agora diverge desta, em vez
+  // de rebuscar e publicar/restaurar por cima de um avanço que o dono nunca viu (consentimento
+  // obsoleto, ADR-0015).
+  seenRemoteSequence: number,
   clientSecret?: string,
 ): Promise<DriveConflictResolution> {
   return invoke("resolve_drive_conflict", {
     clientId,
     clientSecret: clientSecret ?? null,
     choice,
+    seenRemoteSequence,
   });
 }
 

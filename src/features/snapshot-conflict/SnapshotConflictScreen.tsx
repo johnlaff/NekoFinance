@@ -6,9 +6,12 @@ import { errorText, safeErrorMessage } from "../../lib/errors";
 import { invalidateCommands } from "../../lib/useCommand";
 import { closeSnapshotConflict } from "./snapshotConflictStore";
 import {
+  CHECKIN_REFUSED_STALE_CONFLICT,
   conflictGestureDatedLabel,
   conflictRemoteDeviceLabel,
   fetchSnapshotConflictDetails,
+  isAfterPoolClosedError,
+  resolveConflictErrorMessage,
   resolveSnapshotConflictCmd,
   type DriveConflictChoice,
   type DriveConflictDetails,
@@ -81,16 +84,19 @@ const GESTURE_LIST_HINT_STYLE: CSSProperties = {
 };
 
 /** Chave estável por conteúdo: o gesto não tem id próprio e dois gestos idênticos no mesmo
- *  segundo são possíveis — o sufixo de ocorrência desambigua sem depender do índice de render. */
-function gestureKeys(gestures: DriveConflictGesture[]): string[] {
+ *  segundo são possíveis — o sufixo de ocorrência desambigua sem depender do índice de render.
+ *  `JSON.stringify` do array (nunca `join("|")`): `source_sheet` é dado do usuário e pode conter
+ *  "|", o que colidiria duas linhas distintas na mesma chave. Exportada só para o teste de
+ *  regressão da colisão — a tela continua sendo a única chamadora em produção. */
+export function gestureKeys(gestures: DriveConflictGesture[]): string[] {
   const seen = new Map<string, number>();
   return gestures.map((gesture) => {
-    const base = [
+    const base = JSON.stringify([
       gesture.at,
       gesture.event_type,
       gesture.entity_type,
       gesture.source_sheet ?? "",
-    ].join("|");
+    ]);
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     return n === 0 ? base : `${base}|${n}`;
@@ -140,7 +146,11 @@ type Phase =
   | { kind: "ready"; details: DriveConflictDetails }
   | { kind: "resolving"; details: DriveConflictDetails; choice: DriveConflictChoice }
   | { kind: "resolve-error"; details: DriveConflictDetails; message: string }
-  | { kind: "restart-required" };
+  | { kind: "restart-required" }
+  // O pool do banco ativo já foi fechado no backend (`resolve_conflict_use_remote_core` passou do
+  // ponto de não-retorno) antes de a resolução falhar — nenhuma nova tentativa é possível a partir
+  // daqui, então a tela nunca reoferece os botões de escolha, só a saída de reiniciar.
+  | { kind: "restart-required-error"; message: string };
 
 /**
  * Tela de conflito do snapshot no Drive (ADR-0015): os dois aparelhos avançaram a
@@ -156,15 +166,25 @@ export function SnapshotConflictScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let alive = true;
+  // Extraída de propósito: o mount inicial E a recuperação de um consentimento obsoleto (veredito
+  // `CHECKIN_REFUSED_STALE_CONFLICT` abaixo) precisam do MESMO fetch fresco — o dono nunca decide
+  // em cima do manifest velho que a tela mostrou antes. Nunca chama `setPhase` de forma síncrona
+  // aqui dentro (regra `react-hooks/set-state-in-effect`): o mount já parte de `{ kind: "loading" }`
+  // pelo estado inicial do `useState`, e o chamador de recuperação (dentro de `resolve`, um
+  // manipulador de evento, não um efeito) seta a fase ANTES de invocar isto.
+  function loadDetails(alive: () => boolean) {
     fetchSnapshotConflictDetails(GOOGLE_CLIENT_ID)
       .then((details) => {
-        if (alive) setPhase({ kind: "ready", details });
+        if (alive()) setPhase({ kind: "ready", details });
       })
       .catch((e: unknown) => {
-        if (alive) setPhase({ kind: "load-error", message: safeErrorMessage(e) });
+        if (alive()) setPhase({ kind: "load-error", message: safeErrorMessage(e) });
       });
+  }
+
+  useEffect(() => {
+    let alive = true;
+    loadDetails(() => alive);
     return () => {
       alive = false;
     };
@@ -177,7 +197,11 @@ export function SnapshotConflictScreen() {
   async function resolve(details: DriveConflictDetails, choice: DriveConflictChoice) {
     setPhase({ kind: "resolving", details, choice });
     try {
-      const result = await resolveSnapshotConflictCmd(GOOGLE_CLIENT_ID, choice);
+      const result = await resolveSnapshotConflictCmd(
+        GOOGLE_CLIENT_ID,
+        choice,
+        details.remote_manifest.sequence,
+      );
       if (result.requires_restart) {
         // `use_remote` fecha o pool do banco ativo para trocar o arquivo debaixo dele — nenhum
         // outro comando volta a funcionar até o reinício. A tela trava aqui de propósito, nunca
@@ -188,13 +212,33 @@ export function SnapshotConflictScreen() {
         closeSnapshotConflict();
       }
     } catch (e) {
-      // Verbatim, nunca o fallback genérico: as recusas do backend aqui (schema mais nova, a
-      // disputa mudou de novo entre a tela abrir e o clique) já são frases PT-BR pensadas para o
-      // dono — o mesmo tratamento de `driveCheckinErrorMessage` para a recusa do check-in normal.
+      if (errorText(e) === CHECKIN_REFUSED_STALE_CONFLICT) {
+        // Consentimento obsoleto (ADR-0015): o outro aparelho publicou de novo entre esta tela
+        // abrir e o clique — nunca publica/restaura por cima do que o dono nunca viu. Recarrega
+        // os detalhes em vez de mostrar um erro parado: o dono vê o estado novo e decide de novo.
+        setPhase({ kind: "loading" });
+        loadDetails(() => true);
+        return;
+      }
+      if (isAfterPoolClosedError(e)) {
+        // O pool já foi fechado no backend para a troca de arquivo antes de falhar — não há mais
+        // pool para uma nova tentativa. Trava em "reinicie", nunca reoferece os botões de escolha.
+        setPhase({
+          kind: "restart-required-error",
+          message:
+            "A troca para o snapshot do outro aparelho parou no meio do caminho, com o banco " +
+            "já fechado para a troca — não há como tentar de novo nesta tela. Feche e abra o " +
+            "Neko Finance de novo.",
+        });
+        return;
+      }
+      // Verbatim só atrás do prefixo de contrato conhecido (schema mais nova, consentimento
+      // obsoleto de novo tipo); qualquer outro erro cai no fallback calmo — nunca uma mensagem
+      // técnica crua na tela.
       setPhase({
         kind: "resolve-error",
         details,
-        message: errorText(e) || safeErrorMessage(e),
+        message: resolveConflictErrorMessage(e),
       });
     }
   }
@@ -255,27 +299,37 @@ export function SnapshotConflictScreen() {
           />
         )}
 
+        {phase.kind === "restart-required-error" && (
+          <EmptyState
+            variant="error"
+            title="Reinicie o Neko Finance"
+            description={phase.message}
+          />
+        )}
+
         {details && (
           <>
             <p
               role="status"
               style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text)" }}
             >
-              Isto é {conflictRemoteDeviceLabel(details.remote_manifest)}. Cada lista
-              abaixo mostra o que se perde se você escolher o outro lado.
+              Isto é {conflictRemoteDeviceLabel(details.remote_manifest)}. As listas
+              abaixo cobrem só importações e escritas na planilha — split, tag,
+              reembolso, fatura, teto e cenário ainda não ficam registrados aqui. Os
+              horários do lado do outro aparelho vêm do relógio dele, não deste.
             </p>
 
             <GestureList
               title="Gestos deste aparelho"
               hint="perdidos se você usar o outro aparelho"
               gestures={details.local_gestures}
-              emptyText="Nenhum gesto registrado neste aparelho desde a última base em comum."
+              emptyText="Não há registro de importação ou escrita na planilha neste aparelho desde a última base em comum."
             />
             <GestureList
               title="Gestos do outro aparelho"
               hint="perdidos se você mantiver este aparelho"
               gestures={details.remote_gestures}
-              emptyText="Nenhum gesto registrado no outro aparelho desde a última base em comum."
+              emptyText="Não há registro de importação ou escrita na planilha no outro aparelho desde a última base em comum."
             />
 
             {resolveError && (
@@ -283,6 +337,33 @@ export function SnapshotConflictScreen() {
                 {resolveError}
               </p>
             )}
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-3)",
+                justifyContent: "space-between",
+              }}
+            >
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "var(--fs-sm)",
+                  color: "var(--text-muted)",
+                }}
+              >
+                Decidir depois fecha esta tela sem escolher — o conflito volta a
+                aparecer no próximo check-in.
+              </p>
+              <Button
+                variant="ghost"
+                disabled={resolving !== null}
+                onClick={() => closeSnapshotConflict()}
+              >
+                Decidir depois
+              </Button>
+            </div>
 
             <div
               style={{

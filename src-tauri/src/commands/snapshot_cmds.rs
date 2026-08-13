@@ -25,6 +25,29 @@ pub const CHECKIN_REFUSED_PULL: &str = "Check-in recusado: outro aparelho public
 pub const CHECKIN_REFUSED_CONFLICT: &str = "Check-in recusado: os dois lados mudaram desde o último ponto em comum entre os \
      aparelhos.";
 
+/// Consentimento obsoleto (ADR-0015): `resolve_conflict_keep_local_core`/`resolve_conflict_use_remote_core`
+/// rebuscam o manifest remoto antes de agir, mas a tela de conflito só sabe do manifest que
+/// mostrou ao dono (`DriveConflictDetails.remote_manifest`, capturado no fetch anterior). Se o
+/// remoto avançou DE NOVO entre a tela abrir e o clique, publicar/restaurar por cima do que o
+/// dono nunca viu seria a mesma sobrescrita silenciosa que o lease impede no check-in normal —
+/// mesmo prefixo de contrato ("Check-in recusado: "), a tela recarrega os detalhes em vez de
+/// mostrar um erro parado (nunca oferece "tentar de novo" sobre um manifest que já mudou outra
+/// vez).
+pub const CHECKIN_REFUSED_STALE_CONFLICT: &str = "Check-in recusado: a disputa mudou de novo desde que você abriu esta tela — veja \
+     os detalhes atualizados antes de escolher.";
+
+/// Prefixo estável da recusa de restauração por schema mais novo — a versão numérica varia a
+/// cada par de aparelhos, então só o PREFIXO entra no contrato (espelha `RESTORE_REFUSED_PREFIX`
+/// em `src/features/snapshot-conflict/snapshotConflictView.ts`).
+const RESTORE_REFUSED_PREFIX: &str = "Restauração recusada: ";
+
+/// Sufixo compartilhado por TODO erro que `resolve_conflict_use_remote_core` devolve depois de
+/// fechar o pool do banco ativo para trocar o arquivo (o "ponto de não-retorno" comentado lá
+/// embaixo) — a partir daí não sobra pool para uma nova tentativa nesta sessão, então o frontend
+/// reconhece este sufixo (`AFTER_POOL_CLOSED_SUFFIX`, `snapshotConflictView.ts`) e nunca reoferece
+/// os botões de escolha, só a saída de reiniciar o app.
+const AFTER_POOL_CLOSED_SUFFIX: &str = "; reinicie o app para continuar";
+
 /// O que a UI de Conexão mostra sobre o último check-in E o último check-out — quando, e por/de
 /// qual aparelho, em cada eixo (os dois avançam de forma independente: um check-out sem check-in
 /// depois é normal, e vice-versa).
@@ -326,17 +349,24 @@ pub struct ConflictResolutionOutcome {
 
 /// Mantém ESTE aparelho: publica o conteúdo local por cima do remoto com uma sequência que supera
 /// os dois lados — nunca só `base + 1`, que o árbitro recusaria de novo com `Conflict`, o mesmo
-/// veredito que trouxe o dono a esta tela. Rebusca o manifest em vez de confiar num que a tela viu
-/// antes: o remoto pode ter avançado de novo entre a tela abrir e o dono escolher. O pool
-/// continua o MESMO depois — nada no arquivo ativo muda, só o que fica publicado no Drive.
+/// veredito que trouxe o dono a esta tela. Rebusca o manifest para descobrir a sequência ATUAL,
+/// mas só publica se ela bater com `seen_remote_sequence` (o manifest que a TELA mostrou ao
+/// dono) — um avanço novo desde então é consentimento obsoleto (ADR-0015): publicar por cima do
+/// que o dono nunca viu seria a mesma sobrescrita silenciosa que o lease impede no check-in
+/// normal, só que um clique tarde demais. O pool continua o MESMO depois em qualquer caso — nada
+/// no arquivo ativo muda, só o que fica publicado no Drive.
 pub(crate) async fn resolve_conflict_keep_local_core(
     pool: &SqlitePool,
     app_dir: &Path,
     drive: &DriveSnapshotClient,
+    seen_remote_sequence: i64,
 ) -> Result<ConflictResolutionOutcome, String> {
     let local_state = state::load_or_init(pool).await?;
     let remote = drive.fetch_manifest().await?;
     let remote_sequence = remote.as_ref().map(|m| m.sequence).unwrap_or(0);
+    if remote_sequence != seen_remote_sequence {
+        return Err(CHECKIN_REFUSED_STALE_CONFLICT.into());
+    }
 
     let (export_hash, db_bytes) = export_candidate_snapshot(pool, app_dir).await?;
     let resolved_sequence = (local_state.base_sequence + 1).max(remote_sequence + 1);
@@ -383,10 +413,17 @@ pub(crate) async fn resolve_conflict_keep_local_core(
 /// `setup()` faz isso). Por isso o resultado sempre pede reinício em vez de devolver um pool
 /// utilizável, no mesmo espírito de `CHECKIN_REFUSED_PULL` ("feche e abra o app de novo") — a UI
 /// trava a tela até o dono reiniciar, nunca finge que o app continua operável com o pool fechado.
+///
+/// `seen_remote_sequence` é o mesmo consentimento obsoleto de `resolve_conflict_keep_local_core`,
+/// só que na outra direção: baixar e restaurar um remoto que avançou de novo depois da tela abrir
+/// aplicaria conteúdo que o dono nunca viu, sem ele nunca ter escolhido especificamente AQUELE
+/// estado. A checagem roda ANTES de fechar o pool (ponto de não-retorno mais abaixo), então a
+/// recusa aqui ainda permite uma nova tentativa na mesma sessão.
 pub(crate) async fn resolve_conflict_use_remote_core(
     pool: SqlitePool,
     db_path: &Path,
     drive: &DriveSnapshotClient,
+    seen_remote_sequence: i64,
 ) -> Result<ConflictResolutionOutcome, String> {
     let local_state = state::load_or_init(&pool).await?;
     let local_schema: i64 =
@@ -399,11 +436,14 @@ pub(crate) async fn resolve_conflict_use_remote_core(
         .fetch_manifest()
         .await?
         .ok_or_else(|| NO_CONFLICT_NO_REMOTE_MANIFEST.to_string())?;
+    if remote_manifest.sequence != seen_remote_sequence {
+        return Err(CHECKIN_REFUSED_STALE_CONFLICT.into());
+    }
     // Mesma recusa do check-out (ADR-0015): um aparelho desatualizado nunca rebaixa dados
     // migrados, mesmo quando o dono escolheu explicitamente "usar o outro aparelho".
     if remote_manifest.schema_version > local_schema {
         return Err(format!(
-            "Restauração recusada: o snapshot do outro aparelho foi publicado por uma versão \
+            "{RESTORE_REFUSED_PREFIX}o snapshot do outro aparelho foi publicado por uma versão \
              mais nova do Neko Finance (schema {} > {}) — atualize o app antes de continuar.",
             remote_manifest.schema_version, local_schema
         ));
@@ -430,11 +470,18 @@ pub(crate) async fn resolve_conflict_use_remote_core(
         let _ = std::fs::remove_file(&tmp_path);
         // O pool que este comando recebeu já está fechado — não há como devolver um substituto
         // utilizável ao estado gerenciado do Tauri a partir daqui, então mesmo uma falha na troca
-        // (que deixa `db_path` intocado) exige reiniciar o app para voltar a operar.
-        return Err(format!("{e}; reinicie o app para continuar"));
+        // (que deixa `db_path` intocado) exige reiniciar o app para voltar a operar. Sufixo
+        // COMPARTILHADO com as duas falhas abaixo — o frontend reconhece por ele e nunca reoferece
+        // um botão de repetir sem pool para operar (`isAfterPoolClosedError`, TypeScript).
+        return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
     }
 
-    let new_pool = checkout::open_migrated_pool(db_path).await?;
+    let new_pool = match checkout::open_migrated_pool(db_path).await {
+        Ok(p) => p,
+        // Mesmo raciocínio: o pool ORIGINAL já foi fechado antes desta linha — abrir o pool NOVO
+        // sobre o arquivo já trocado falhando também não tem retentativa possível nesta sessão.
+        Err(e) => return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}")),
+    };
     let checked_out_at = chrono::Utc::now().to_rfc3339();
     let adopt_result = state::adopt_after_restore(
         &new_pool,
@@ -447,7 +494,12 @@ pub(crate) async fn resolve_conflict_use_remote_core(
     )
     .await;
     new_pool.close().await;
-    adopt_result?;
+    if let Err(e) = adopt_result {
+        // O ARQUIVO ativo já é o remoto neste ponto (a troca em si teve sucesso) — só a gravação
+        // do bookkeeping local falhou. Ainda assim não há pool para tentar de novo: reiniciar é a
+        // única saída, igual às duas falhas acima.
+        return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
+    }
 
     Ok(ConflictResolutionOutcome {
         choice: "use_remote".to_string(),
@@ -456,6 +508,9 @@ pub(crate) async fn resolve_conflict_use_remote_core(
     })
 }
 
+// `seen_remote_sequence` vem da tela: a sequência do manifest que `drive_conflict_details`
+// mostrou ao dono, nunca rebuscada aqui — é o que sustenta a checagem de consentimento obsoleto
+// dentro de cada `resolve_conflict_*_core` (ADR-0015).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn resolve_drive_conflict(
@@ -465,6 +520,7 @@ pub async fn resolve_drive_conflict(
     client_id: String,
     client_secret: Option<String>,
     choice: String,
+    seen_remote_sequence: i64,
 ) -> Result<ConflictResolutionOutcome, String> {
     let client_secret = oauth::pkce::resolve_client_secret(client_secret);
     let token =
@@ -474,10 +530,19 @@ pub async fn resolve_drive_conflict(
 
     let _lock = guard.inner().lock().await;
     match choice.as_str() {
-        "keep_local" => resolve_conflict_keep_local_core(pool.inner(), &app_dir.0, &drive).await,
+        "keep_local" => {
+            resolve_conflict_keep_local_core(pool.inner(), &app_dir.0, &drive, seen_remote_sequence)
+                .await
+        }
         "use_remote" => {
             let db_path = app_dir.0.join("neko-finance.db");
-            resolve_conflict_use_remote_core(pool.inner().clone(), &db_path, &drive).await
+            resolve_conflict_use_remote_core(
+                pool.inner().clone(),
+                &db_path,
+                &drive,
+                seen_remote_sequence,
+            )
+            .await
         }
         other => Err(format!("Escolha de conflito desconhecida: {other}")),
     }
@@ -497,6 +562,15 @@ mod tests {
         const CHECKIN_REFUSED_PREFIX: &str = "Check-in recusado: ";
         assert!(CHECKIN_REFUSED_PULL.starts_with(CHECKIN_REFUSED_PREFIX));
         assert!(CHECKIN_REFUSED_CONFLICT.starts_with(CHECKIN_REFUSED_PREFIX));
+        assert!(CHECKIN_REFUSED_STALE_CONFLICT.starts_with(CHECKIN_REFUSED_PREFIX));
+    }
+
+    #[test]
+    fn restore_refusal_shares_the_stable_contract_prefix_with_the_frontend() {
+        // Espelha `RESTORE_REFUSED_PREFIX` de
+        // `src/features/snapshot-conflict/snapshotConflictView.ts` — mesma disciplina do teste
+        // acima, para o outro prefixo de contrato desta tela.
+        assert_eq!(RESTORE_REFUSED_PREFIX, "Restauração recusada: ");
     }
 
     // `VACUUM INTO` exige um banco de ORIGEM em arquivo — a partir de `:memory:` ele não
@@ -1193,7 +1267,9 @@ mod tests {
             .await;
         let drive = DriveSnapshotClient::new(token(), server.url());
 
-        let outcome = resolve_conflict_keep_local_core(&pool, &app_dir, &drive)
+        // A tela mostrou o remoto na sequência 5 (o mesmo manifest mockado acima) — nada avançou
+        // de novo entre o fetch e o clique, então o consentimento continua válido.
+        let outcome = resolve_conflict_keep_local_core(&pool, &app_dir, &drive, 5)
             .await
             .expect("manter este aparelho deve publicar por cima do remoto");
         assert_eq!(outcome.choice, "keep_local");
@@ -1244,8 +1320,11 @@ mod tests {
 
         let pool_for_resolve = pool.clone();
         let app_dir_for_resolve = app_dir.clone();
+        // Nenhum manifest publicado (mock devolve lista vazia) — remoto ausente conta como
+        // sequência 0, o que a tela também teria visto no fetch anterior.
         let resolve = tokio::spawn(async move {
-            resolve_conflict_keep_local_core(&pool_for_resolve, &app_dir_for_resolve, &drive).await
+            resolve_conflict_keep_local_core(&pool_for_resolve, &app_dir_for_resolve, &drive, 0)
+                .await
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1256,6 +1335,67 @@ mod tests {
             .expect("NÃO pode travar para sempre esperando a única conexão (VACUUM INTO incluso)")
             .expect("a task não deve entrar em panic");
         assert!(result.is_ok());
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_keep_local_refuses_with_stale_conflict_when_the_remote_advanced_again_since_the_screen_fetched_it()
+     {
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+        let local = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            1,
+            "2026-08-11T10:00:00Z",
+            &local.device_id,
+            "seed-hash-nao-bate-com-export-real",
+        )
+        .await
+        .unwrap();
+
+        // A tela buscou os detalhes do conflito e mostrou o remoto na sequência 5. Antes do dono
+        // clicar "Manter este aparelho", um TERCEIRO check-in publicou de novo (sequência 7) — o
+        // clique não pode publicar por cima de um estado que o dono nunca viu.
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 7,
+            created_at: "2026-08-12T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de upload: se o código tentasse publicar mesmo com a disputa velha, a
+        // chamada não-mockada devolveria 501 e o teste acusaria a diferença.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let err = resolve_conflict_keep_local_core(&pool, &app_dir, &drive, 5)
+            .await
+            .expect_err("consentimento obsoleto: o remoto avançou de novo desde o fetch da tela");
+        assert_eq!(err, CHECKIN_REFUSED_STALE_CONFLICT);
+
+        // Estado local intocado: nenhuma sequência foi reivindicada em vão.
+        let state_after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 1);
 
         std::fs::remove_dir_all(&app_dir).ok();
     }
@@ -1347,7 +1487,8 @@ mod tests {
             .await;
         let drive = DriveSnapshotClient::new(token(), server.url());
 
-        let outcome = resolve_conflict_use_remote_core(pool, &db_path, &drive)
+        // A tela mostrou o remoto na sequência 9 (o mesmo manifest mockado acima).
+        let outcome = resolve_conflict_use_remote_core(pool, &db_path, &drive, 9)
             .await
             .expect("usar o outro aparelho deve restaurar com sucesso");
         assert_eq!(outcome.choice, "use_remote");
@@ -1425,13 +1566,75 @@ mod tests {
         // schema recusado, a chamada não-mockada devolveria 501 e o teste acusaria a diferença.
         let drive = DriveSnapshotClient::new(token(), server.url());
 
-        let err = resolve_conflict_use_remote_core(pool, &db_path, &drive)
+        let err = resolve_conflict_use_remote_core(pool, &db_path, &drive, 9)
             .await
             .expect_err("schema remoto mais novo nunca pode restaurar, mesmo escolhido");
         assert!(err.contains("mais nova"), "erro: {err}");
+        // Ainda ANTES do ponto de não-retorno (o pool não foi fechado) — a tela pode oferecer
+        // tentar de novo depois de atualizar o app, então o erro nunca carrega o sufixo
+        // compartilhado das falhas pós-fechamento do pool.
+        assert!(!err.ends_with(AFTER_POOL_CLOSED_SUFFIX), "erro: {err}");
 
         // Nada mudou: o arquivo ativo continua o mesmo (reabrir prova que ele ainda existe e
         // migra normalmente, sem qualquer sinal do marcador do remoto).
+        let reopened = checkout::open_migrated_pool(&db_path).await.unwrap();
+        let state_after = state::load_or_init(&reopened).await.unwrap();
+        assert_eq!(state_after.base_sequence, 0);
+        reopened.close().await;
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_use_remote_refuses_with_stale_conflict_when_the_remote_advanced_again_since_the_screen_fetched_it()
+     {
+        let dir = conflict_test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = checkout::open_migrated_pool(&db_path).await.unwrap();
+
+        // A tela buscou os detalhes do conflito e mostrou o remoto na sequência 9. Antes do dono
+        // clicar "Usar o outro aparelho", um TERCEIRO check-in publicou de novo (sequência 12) —
+        // baixar e restaurar por cima aplicaria um conteúdo que o dono nunca viu nem escolheu.
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 12,
+            created_at: "2026-08-12T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock para o download do snapshot: se o código tentasse baixar mesmo com a
+        // disputa velha, a chamada não-mockada devolveria 501 e o teste acusaria a diferença.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let err = resolve_conflict_use_remote_core(pool, &db_path, &drive, 9)
+            .await
+            .expect_err("consentimento obsoleto: o remoto avançou de novo desde o fetch da tela");
+        assert_eq!(err, CHECKIN_REFUSED_STALE_CONFLICT);
+        // Ainda ANTES do ponto de não-retorno — o pool segue utilizável, a tela pode tentar de
+        // novo depois de recarregar os detalhes.
+        assert!(!err.ends_with(AFTER_POOL_CLOSED_SUFFIX), "erro: {err}");
+
+        // Nada mudou: o arquivo ativo continua o local original (reabrir prova que ele ainda
+        // existe e migra normalmente, sem qualquer sinal de conteúdo remoto).
         let reopened = checkout::open_migrated_pool(&db_path).await.unwrap();
         let state_after = state::load_or_init(&reopened).await.unwrap();
         assert_eq!(state_after.base_sequence, 0);

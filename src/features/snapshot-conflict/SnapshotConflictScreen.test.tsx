@@ -2,11 +2,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockCommands, mockInvoke } from "../../test/commands";
-import type { DriveConflictDetails } from "./snapshotConflictView";
+import type {
+  DriveConflictDetails,
+  DriveConflictGesture,
+} from "./snapshotConflictView";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-import { SnapshotConflictScreen } from "./SnapshotConflictScreen";
+import { gestureKeys, SnapshotConflictScreen } from "./SnapshotConflictScreen";
 import {
   closeSnapshotConflict,
   openSnapshotConflict,
@@ -77,6 +80,49 @@ describe("SnapshotConflictScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("gestureKeys: fonte da lista com '|' no dado do usuário nunca colide com outro gesto", () => {
+    function gesture(overrides: Partial<DriveConflictGesture>): DriveConflictGesture {
+      return {
+        at: "2026-08-12 09:00:00",
+        event_type: "import",
+        entity_type: "transaction",
+        source_sheet: null,
+        ...overrides,
+      };
+    }
+
+    // `source_sheet` é dado do usuário (nome de aba digitado por ele) e pode conter "|" — com
+    // `join("|")` isto colidiria com um outro gesto cujos campos, concatenados, formassem o
+    // MESMO literal (aqui: o segundo gesto termina exatamente onde o primeiro embutiria o "|").
+    const a = gesture({ source_sheet: "Extra|1" });
+    const b = gesture({ entity_type: "transaction|Extra", source_sheet: "1" });
+    const [keyA, keyB] = gestureKeys([a, b]);
+    expect(keyA).not.toBe(keyB);
+  });
+
+  it("a copy declara o recorte real das listas e a origem do relógio do outro lado", async () => {
+    mockCommands({ drive_conflict_details: DETAILS });
+    render(<SnapshotConflictScreen />);
+
+    // Regra 7 do ui-standards: a copy só afirma o que o dado confirma — o `sync_log` hoje só
+    // registra import/write-back da planilha, nunca split/tag/reembolso/fatura/teto/cenário.
+    // `findByText` (não `findByRole("status")`): o `EmptyState` de carregamento TAMBÉM usa
+    // `role="status"` — a busca por texto evita pegar o status errado numa corrida com o fetch.
+    await screen.findByText(/As listas abaixo cobrem só importações/);
+    const status = screen.getByText(/^Isto é/);
+    expect(status).toHaveTextContent(
+      "As listas abaixo cobrem só importações e escritas na planilha",
+    );
+    expect(status).toHaveTextContent(
+      "split, tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui",
+    );
+    // Os horários da lista remota vêm do relógio do OUTRO aparelho — nunca lidos como se
+    // tivessem passado pela sincronização deste.
+    expect(status).toHaveTextContent(
+      "Os horários do lado do outro aparelho vêm do relógio dele, não deste",
+    );
+  });
+
   it("mostra o estado honesto quando um dos lados não tem gesto nenhum registrado", async () => {
     mockCommands({
       drive_conflict_details: { ...DETAILS, local_gestures: [], remote_gestures: [] },
@@ -84,10 +130,14 @@ describe("SnapshotConflictScreen", () => {
     render(<SnapshotConflictScreen />);
 
     expect(
-      await screen.findByText(/Nenhum gesto registrado neste aparelho/),
+      await screen.findByText(
+        /Não há registro de importação ou escrita na planilha neste aparelho/,
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Nenhum gesto registrado no outro aparelho/),
+      screen.getByText(
+        /Não há registro de importação ou escrita na planilha no outro aparelho/,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -121,7 +171,9 @@ describe("SnapshotConflictScreen", () => {
 
     await waitFor(() => expect(snapshotConflictOpenSnapshot()).toBe(false));
     const call = mockInvoke.mock.calls.find((c) => c[0] === "resolve_drive_conflict");
-    expect(call?.[1]).toMatchObject({ choice: "keep_local" });
+    // A sequência do manifest que a TELA mostrou (5, `DETAILS.remote_manifest.sequence`) viaja
+    // no gesto — é o que sustenta a recusa por consentimento obsoleto do lado do backend.
+    expect(call?.[1]).toMatchObject({ choice: "keep_local", seenRemoteSequence: 5 });
   });
 
   it("usar o outro aparelho: exige reinício e nunca fecha a tela sozinha", async () => {
@@ -148,16 +200,41 @@ describe("SnapshotConflictScreen", () => {
     // app segue operável fechando sozinha.
     expect(snapshotConflictOpenSnapshot()).toBe(true);
     const call = mockInvoke.mock.calls.find((c) => c[0] === "resolve_drive_conflict");
-    expect(call?.[1]).toMatchObject({ choice: "use_remote" });
+    expect(call?.[1]).toMatchObject({ choice: "use_remote", seenRemoteSequence: 5 });
   });
 
-  it("mostra o erro e mantém a escolha disponível quando a resolução falha", async () => {
+  it("mostra verbatim um erro atrás do prefixo de contrato de restauração", async () => {
     const user = userEvent.setup();
     openSnapshotConflict();
     mockCommands({
       drive_conflict_details: DETAILS,
       resolve_drive_conflict: new Error(
-        "Check-in recusado: os dois lados mudaram de novo.",
+        "Restauração recusada: o snapshot do outro aparelho foi publicado por uma versão " +
+          "mais nova do Neko Finance (schema 9 > 7) — atualize o app antes de continuar.",
+      ),
+    });
+    render(<SnapshotConflictScreen />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Usar o outro aparelho" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Restauração recusada: o snapshot do outro aparelho foi publicado por uma versão mais nova",
+    );
+    expect(snapshotConflictOpenSnapshot()).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "Manter este aparelho" }),
+    ).not.toBeDisabled();
+  });
+
+  it("um erro sem prefixo de contrato cai no fallback calmo, nunca vaza texto técnico cru", async () => {
+    const user = userEvent.setup();
+    openSnapshotConflict();
+    mockCommands({
+      drive_conflict_details: DETAILS,
+      resolve_drive_conflict: new Error(
+        "error returned from database: (code: 5) database is locked",
       ),
     });
     render(<SnapshotConflictScreen />);
@@ -166,12 +243,91 @@ describe("SnapshotConflictScreen", () => {
       await screen.findByRole("button", { name: "Manter este aparelho" }),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Check-in recusado: os dois lados mudaram de novo.",
+    const alert = await screen.findByRole("alert");
+    expect(alert).not.toHaveTextContent("database is locked");
+    expect(alert).toHaveTextContent("banco local está ocupado");
+  });
+
+  it("consentimento obsoleto: recarrega os detalhes em vez de mostrar um erro parado", async () => {
+    const user = userEvent.setup();
+    openSnapshotConflict();
+    const UPDATED_DETAILS: DriveConflictDetails = {
+      ...DETAILS,
+      remote_manifest: { ...DETAILS.remote_manifest, sequence: 7 },
+      remote_gestures: [
+        {
+          at: "2026-08-12 08:30:00",
+          event_type: "import",
+          entity_type: "transaction",
+          source_sheet: "Cartão",
+        },
+      ],
+    };
+    let detailsCallCount = 0;
+    mockCommands({
+      drive_conflict_details: () => {
+        detailsCallCount += 1;
+        return detailsCallCount === 1 ? DETAILS : UPDATED_DETAILS;
+      },
+      resolve_drive_conflict: new Error(
+        "Check-in recusado: a disputa mudou de novo desde que você abriu esta tela — veja " +
+          "os detalhes atualizados antes de escolher.",
+      ),
+    });
+    render(<SnapshotConflictScreen />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manter este aparelho" }),
     );
-    expect(snapshotConflictOpenSnapshot()).toBe(true);
+
+    // A tela busca os detalhes DE NOVO — nunca mostra a recusa como um erro parado — e o dono vê
+    // o estado atualizado (o outro aparelho já em outra sequência) para decidir de novo.
+    await waitFor(() => expect(detailsCallCount).toBe(2));
     expect(
-      screen.getByRole("button", { name: "Manter este aparelho" }),
-    ).not.toBeDisabled();
+      await screen.findByRole("button", { name: "Manter este aparelho" }),
+    ).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(snapshotConflictOpenSnapshot()).toBe(true);
+  });
+
+  it("erro pós-fechamento do pool: trava em reiniciar, nunca reoferece os botões de escolha", async () => {
+    const user = userEvent.setup();
+    openSnapshotConflict();
+    mockCommands({
+      drive_conflict_details: DETAILS,
+      resolve_drive_conflict: new Error(
+        "trocar pelo snapshot baixado: Os arquivos de origem são diferentes; reinicie o app " +
+          "para continuar",
+      ),
+    });
+    render(<SnapshotConflictScreen />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Usar o outro aparelho" }),
+    );
+
+    expect(await screen.findByText("Reinicie o Neko Finance")).toBeInTheDocument();
+    // Nenhum botão de escolha sobrevive — não há pool para uma nova tentativa nesta sessão.
+    expect(
+      screen.queryByRole("button", { name: "Manter este aparelho" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Usar o outro aparelho" }),
+    ).not.toBeInTheDocument();
+    expect(snapshotConflictOpenSnapshot()).toBe(true);
+  });
+
+  it("Decidir depois fecha a tela sem publicar nem restaurar nada", async () => {
+    const user = userEvent.setup();
+    openSnapshotConflict();
+    mockCommands({ drive_conflict_details: DETAILS });
+    render(<SnapshotConflictScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "Decidir depois" }));
+
+    expect(snapshotConflictOpenSnapshot()).toBe(false);
+    expect(mockInvoke.mock.calls.some((c) => c[0] === "resolve_drive_conflict")).toBe(
+      false,
+    );
   });
 });
