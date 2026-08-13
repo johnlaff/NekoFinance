@@ -178,16 +178,18 @@ export function driveCheckoutLabel(
   return recency ? `Última leitura ${recency}, ${device}.` : `Recebido ${device}.`;
 }
 
-/** Rótulo fechado que `snapshot_state.last_checkout_outcome` grava — mesmos dois valores que o
- *  backend (`checkout::outcome_warning_fields`) escreve. */
-type CheckoutOutcomeTag = "refused_newer_schema" | "error";
+/** Rótulo fechado que `snapshot_state.last_checkout_outcome` grava — os dois de uma tentativa
+ *  real de restauração (`checkout::outcome_warning_fields`) e o da sonda leve de foco
+ *  (`checkout::probe_newer_snapshot_on_focus`, ADR-0015). */
+type CheckoutOutcomeTag = "refused_newer_schema" | "error" | "newer_available";
 
 /**
  * Aviso calmo do desfecho do último check-out que merece a atenção do dono: a
  * recusa por schema remoto mais novo orienta a atualizar o app; a falha de rede/integridade diz
- * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura — nunca um
- * botão de "tentar agora" que esta tela não tem. `null` quando não há nada a avisar (check-out em
- * dia, restaurado com sucesso, ou nunca rodou).
+ * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura; e uma versão
+ * mais nova detectada em foco (sem baixar/trocar arquivo mid-session) pede reabrir o app — nunca
+ * um botão de "tentar agora"/"baixar agora" que esta tela não tem. `null` quando não há nada a
+ * avisar (check-out em dia, restaurado com sucesso, ou nunca rodou).
  */
 export function driveCheckoutOutcomeWarning(
   info: DriveCheckinInfo | null | undefined,
@@ -204,9 +206,29 @@ export function driveCheckoutOutcomeWarning(
         "A última leitura do Drive não aconteceu — o app tenta de novo sozinho na próxima " +
         "abertura."
       );
+    case "newer_available":
+      return (
+        "Uma versão mais nova está disponível no Drive — feche e abra o app de novo para " +
+        "recebê-la."
+      );
     default:
       return null;
   }
+}
+
+/**
+ * Nota calma de "há mudanças locais ainda não publicadas" (ADR-0015): o app sobe
+ * sozinho ao fechar ou depois de um gesto material, então isto nunca é um pedido de ação — é só o
+ * estado honesto para o dono saber que precisa de rede antes de trocar de aparelho.
+ */
+export function driveUnpublishedChangesNote(
+  info: DriveCheckinInfo | null | undefined,
+): string | null {
+  if (!info?.pending_local_changes) return null;
+  return (
+    "Há mudanças locais ainda não publicadas — o app publica sozinho ao fechar ou você " +
+    "pode fazer o check-in agora."
+  );
 }
 
 // --- Leitura -----------------------------------------------------------------------------

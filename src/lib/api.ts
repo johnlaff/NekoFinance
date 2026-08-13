@@ -981,6 +981,16 @@ export interface SyncDonePayload {
 /** Nome do evento emitido pelo backend quando um sync em segundo plano conclui. */
 export const SYNC_DONE_EVENT = "neko://sync-done";
 
+/** Carga útil do evento `neko://snapshot-sync-done` (ADR-0015), emitido depois de
+ *  qualquer tentativa automática de check-in do snapshot no Drive (foco, gesto material, fechar). */
+export interface SnapshotSyncDonePayload {
+  conflict_pending: boolean;
+}
+
+/** Nome do evento emitido pelo backend depois de uma tentativa automática de check-in do
+ *  snapshot — o eixo próprio do Drive, à parte de `SYNC_DONE_EVENT` (que é da planilha). */
+export const SNAPSHOT_SYNC_DONE_EVENT = "neko://snapshot-sync-done";
+
 /** Função para cancelar uma assinatura de evento. */
 export type UnlistenFn = () => void;
 
@@ -1163,6 +1173,13 @@ export interface DriveCheckinInfo {
   last_checkout_outcome: string | null;
   /** Complemento do desfecho acima (versões de schema na recusa, mensagem de erro na falha). */
   last_checkout_outcome_detail: string | null;
+  /** Há mudanças locais que ainda não foram publicadas (ADR-0015) — honesto mesmo
+   *  quando a tentativa automática mais recente falhou ou foi recusada. */
+  pending_local_changes: boolean;
+  /** Há uma disputa `Conflict` pendente de resolução — enquanto `true`, os gatilhos automáticos
+   *  (foco, gesto material, fechar) não tentam nada; só a escolha do dono na tela de conflito
+   *  limpa este estado. */
+  conflict_pending: boolean;
   this_device_id: string;
 }
 

@@ -4,6 +4,7 @@
 //! `manifest` é o contrato serializado ao lado do snapshot. `transport` fala com o
 //! `appDataFolder` do Drive atrás da borda HTTP existente (`crate::http`).
 
+pub mod checkin_task;
 pub mod checkout;
 pub(crate) mod conflict;
 pub mod lease;

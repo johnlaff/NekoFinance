@@ -3,16 +3,28 @@
 
 import {
   driveConflictDetails,
+  listenEvent,
   resolveDriveConflict,
+  SNAPSHOT_SYNC_DONE_EVENT,
   type DriveConflictChoice,
   type DriveConflictDetails,
   type DriveConflictGesture,
   type DriveConflictResolution,
+  type SnapshotSyncDonePayload,
 } from "../../lib/api";
 import { errorText, safeErrorMessage } from "../../lib/errors";
 import { syncRecencyLabel } from "../../lib/syncRecency";
 
 export type { DriveConflictChoice, DriveConflictDetails, DriveConflictGesture };
+
+/** Assina o evento de check-in automático do snapshot (ADR-0015); devolve a
+ *  função de `unlisten`. Emitido depois de QUALQUER tentativa (foco, gesto material, fechar) —
+ *  não só quando um conflito surge. */
+export function listenSnapshotSyncDone(
+  onDone: (payload: SnapshotSyncDonePayload) => void,
+): Promise<() => void> {
+  return listenEvent<SnapshotSyncDonePayload>(SNAPSHOT_SYNC_DONE_EVENT, onDone);
+}
 
 /** Chave estável por conteúdo para as linhas da lista de gestos: o gesto não tem id próprio e
  *  dois gestos idênticos no mesmo segundo são possíveis — o sufixo de ocorrência desambigua sem

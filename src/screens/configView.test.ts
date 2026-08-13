@@ -7,8 +7,22 @@ import {
   driveCheckinLabel,
   driveCheckoutLabel,
   driveCheckoutOutcomeWarning,
+  driveUnpublishedChangesNote,
   greetState,
+  type DriveCheckinInfo,
 } from "./configView";
+
+const BASE_DRIVE_CHECKIN_INFO: DriveCheckinInfo = {
+  last_checkin_at: null,
+  last_checkin_device_id: null,
+  last_checkout_at: null,
+  last_checkout_device_id: null,
+  last_checkout_outcome: null,
+  last_checkout_outcome_detail: null,
+  pending_local_changes: false,
+  conflict_pending: false,
+  this_device_id: "device-a",
+};
 
 describe("greetState — pílula de estado do veredito", () => {
   it("verificando conexão", () => {
@@ -123,6 +137,8 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
         last_checkout_device_id: null,
         last_checkout_outcome: null,
         last_checkout_outcome_detail: null,
+        pending_local_changes: false,
+        conflict_pending: false,
         this_device_id: "device-a",
       },
       now,
@@ -139,6 +155,8 @@ describe("driveCheckinLabel — recência + aparelho do último check-in do snap
         last_checkout_device_id: null,
         last_checkout_outcome: null,
         last_checkout_outcome_detail: null,
+        pending_local_changes: false,
+        conflict_pending: false,
         this_device_id: "device-a",
       },
       now,
@@ -164,6 +182,8 @@ describe("driveCheckoutLabel — recência + aparelho de origem do último check
         last_checkout_device_id: "device-bbbbbbbb-cccc",
         last_checkout_outcome: null,
         last_checkout_outcome_detail: null,
+        pending_local_changes: false,
+        conflict_pending: false,
         this_device_id: "device-a",
       },
       now,
@@ -183,6 +203,8 @@ describe("driveCheckoutLabel — recência + aparelho de origem do último check
         last_checkout_device_id: "device-a",
         last_checkout_outcome: null,
         last_checkout_outcome_detail: null,
+        pending_local_changes: false,
+        conflict_pending: false,
         this_device_id: "device-a",
       },
       now,
@@ -203,6 +225,8 @@ describe("driveCheckoutOutcomeWarning — aviso do desfecho do check-out (spec 0
         last_checkout_device_id: null,
         last_checkout_outcome: null,
         last_checkout_outcome_detail: null,
+        pending_local_changes: false,
+        conflict_pending: false,
         this_device_id: "device-a",
       }),
     ).toBeNull();
@@ -216,6 +240,8 @@ describe("driveCheckoutOutcomeWarning — aviso do desfecho do check-out (spec 0
       last_checkout_device_id: null,
       last_checkout_outcome: "refused_newer_schema",
       last_checkout_outcome_detail: "3:4",
+      pending_local_changes: false,
+      conflict_pending: false,
       this_device_id: "device-a",
     });
     expect(warning).toContain("atualiz");
@@ -229,10 +255,44 @@ describe("driveCheckoutOutcomeWarning — aviso do desfecho do check-out (spec 0
       last_checkout_device_id: null,
       last_checkout_outcome: "error",
       last_checkout_outcome_detail: "timeout de rede",
+      pending_local_changes: false,
+      conflict_pending: false,
       this_device_id: "device-a",
     });
     expect(warning).toContain("não aconteceu");
     expect(warning).toContain("próxima abertura");
+  });
+
+  it("versão mais nova detectada em foco: orienta a reabrir o app, nunca 'baixar agora'", () => {
+    // ADR-0015: a sonda de foco NUNCA baixa/troca o arquivo ativo mid-session —
+    // só o boot restaura de verdade — então a copy não pode prometer um botão que não existe.
+    const warning = driveCheckoutOutcomeWarning({
+      ...BASE_DRIVE_CHECKIN_INFO,
+      last_checkout_outcome: "newer_available",
+    });
+    expect(warning).toContain("feche e abra o app");
+    expect(warning).not.toContain("baixar agora");
+  });
+});
+
+describe("driveUnpublishedChangesNote — estado honesto de mudanças não publicadas (spec 043 #427)", () => {
+  it("nada a mostrar quando não há info ou nada está pendente", () => {
+    expect(driveUnpublishedChangesNote(null)).toBeNull();
+    expect(driveUnpublishedChangesNote(undefined)).toBeNull();
+    expect(
+      driveUnpublishedChangesNote({
+        ...BASE_DRIVE_CHECKIN_INFO,
+        pending_local_changes: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("avisa quando há mudanças locais ainda não publicadas", () => {
+    const note = driveUnpublishedChangesNote({
+      ...BASE_DRIVE_CHECKIN_INFO,
+      pending_local_changes: true,
+    });
+    expect(note).toContain("não publicadas");
   });
 });
 
