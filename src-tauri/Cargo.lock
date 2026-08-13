@@ -2791,6 +2791,7 @@ dependencies = [
  "fs4",
  "getrandom 0.4.3",
  "hex",
+ "jni 0.21.1",
  "keyring",
  "mockito",
  "ndk-context",
