@@ -14,6 +14,7 @@ import {
   isAfterPoolClosedError,
   resolveConflictErrorMessage,
   resolveSnapshotConflictCmd,
+  STALE_CONFLICT_RELOADED_NOTICE,
   type DriveConflictChoice,
   type DriveConflictDetails,
   type DriveConflictGesture,
@@ -124,7 +125,10 @@ function GestureList({
 type Phase =
   | { kind: "loading" }
   | { kind: "load-error"; message: string }
-  | { kind: "ready"; details: DriveConflictDetails }
+  // `staleNotice` só existe quando este `ready` veio de um recarregamento automático depois de
+  // `CHECKIN_REFUSED_STALE_CONFLICT` (nunca do mount inicial) — a tela precisa dizer ao dono que
+  // o clique dele causou uma atualização, não nada.
+  | { kind: "ready"; details: DriveConflictDetails; staleNotice?: string }
   | { kind: "resolving"; details: DriveConflictDetails; choice: DriveConflictChoice }
   | { kind: "resolve-error"; details: DriveConflictDetails; message: string }
   | { kind: "restart-required" }
@@ -153,10 +157,15 @@ export function SnapshotConflictScreen() {
   // aqui dentro (regra `react-hooks/set-state-in-effect`): o mount já parte de `{ kind: "loading" }`
   // pelo estado inicial do `useState`, e o chamador de recuperação (dentro de `resolve`, um
   // manipulador de evento, não um efeito) seta a fase ANTES de invocar isto.
-  function loadDetails(alive: () => boolean) {
+  function loadDetails(alive: () => boolean, staleNotice?: string) {
     fetchSnapshotConflictDetails(GOOGLE_CLIENT_ID)
       .then((details) => {
-        if (alive()) setPhase({ kind: "ready", details });
+        // `exactOptionalPropertyTypes` distingue "propriedade ausente" de "propriedade
+        // presente com valor `undefined`" — o spread condicional constrói o objeto sem a chave
+        // quando não há nota, em vez de atribuir `staleNotice: undefined` explicitamente.
+        if (alive()) {
+          setPhase({ kind: "ready", details, ...(staleNotice ? { staleNotice } : {}) });
+        }
       })
       .catch((e: unknown) => {
         if (alive()) setPhase({ kind: "load-error", message: safeErrorMessage(e) });
@@ -196,9 +205,10 @@ export function SnapshotConflictScreen() {
       if (errorText(e) === CHECKIN_REFUSED_STALE_CONFLICT) {
         // Consentimento obsoleto (ADR-0015): o outro aparelho publicou de novo entre esta tela
         // abrir e o clique — nunca publica/restaura por cima do que o dono nunca viu. Recarrega
-        // os detalhes em vez de mostrar um erro parado: o dono vê o estado novo e decide de novo.
+        // os detalhes em vez de mostrar um erro parado, com uma nota visível: sem ela, o dono
+        // clica, vê o spinner e a tela volta com listas diferentes sem uma palavra.
         setPhase({ kind: "loading" });
-        loadDetails(() => true);
+        loadDetails(() => true, STALE_CONFLICT_RELOADED_NOTICE);
         return;
       }
       if (isAfterPoolClosedError(e)) {
@@ -232,6 +242,7 @@ export function SnapshotConflictScreen() {
       : null;
   const resolving = phase.kind === "resolving" ? phase.choice : null;
   const resolveError = phase.kind === "resolve-error" ? phase.message : null;
+  const staleNotice = phase.kind === "ready" ? phase.staleNotice : undefined;
 
   return (
     <dialog
@@ -290,6 +301,19 @@ export function SnapshotConflictScreen() {
 
         {details && (
           <>
+            {staleNotice && (
+              <p
+                role="status"
+                style={{
+                  margin: 0,
+                  fontSize: "var(--fs-sm)",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {staleNotice}
+              </p>
+            )}
+
             <p
               role="status"
               style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text)" }}

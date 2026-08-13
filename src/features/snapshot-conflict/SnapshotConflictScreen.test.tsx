@@ -81,7 +81,7 @@ describe("SnapshotConflictScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("gestureKeys: fonte da lista com '|' no dado do usuário nunca colide com outro gesto", () => {
+  it("gestureKeys: a BASE (antes do sufixo de ocorrência) nunca colide entre gestos distintos", () => {
     function gesture(overrides: Partial<DriveConflictGesture>): DriveConflictGesture {
       return {
         at: "2026-08-12 09:00:00",
@@ -93,12 +93,18 @@ describe("SnapshotConflictScreen", () => {
     }
 
     // `source_sheet` é dado do usuário (nome de aba digitado por ele) e pode conter "|" — com
-    // `join("|")` isto colidiria com um outro gesto cujos campos, concatenados, formassem o
-    // MESMO literal (aqui: o segundo gesto termina exatamente onde o primeiro embutiria o "|").
+    // `join("|")` isto colide com um outro gesto cujos campos, concatenados, formam o MESMO
+    // literal ("...|transaction|Extra|1" nos dois casos abaixo). Essa colisão de BASE faz `b`
+    // cair no ramo de "segunda ocorrência da base de `a`" — sua chave final vira `${keyA}|1`,
+    // o MESMO sufixo que um gesto DUPLICADO de `a` receberia: a tela não teria como distinguir
+    // "gesto novo que colidiu" de "duplicata genuína". Checar só `keyA !== keyB` não pega isto —
+    // o sufixo de ocorrência sempre torna as duas chaves diferentes como STRING mesmo quando a
+    // base colide por baixo (a asserção antiga passava com `join("|")`, vácua).
     const a = gesture({ source_sheet: "Extra|1" });
     const b = gesture({ entity_type: "transaction|Extra", source_sheet: "1" });
     const [keyA, keyB] = gestureKeys([a, b]);
-    expect(keyA).not.toBe(keyB);
+
+    expect(keyB).not.toBe(`${keyA}|1`);
   });
 
   it("a copy declara o recorte real das listas e a origem do relógio do outro lado", async () => {
@@ -287,6 +293,13 @@ describe("SnapshotConflictScreen", () => {
     expect(
       await screen.findByRole("button", { name: "Manter este aparelho" }),
     ).toBeEnabled();
+    // O silêncio vira uma nota visível e calma — o dono nunca deve achar que o clique não fez
+    // nada: ele viu um spinner e a tela voltou com as listas do outro aparelho já atualizadas.
+    expect(
+      screen.getByText(
+        "A disputa mudou desde que esta tela abriu — os detalhes abaixo já são os atualizados.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(snapshotConflictOpenSnapshot()).toBe(true);
   });

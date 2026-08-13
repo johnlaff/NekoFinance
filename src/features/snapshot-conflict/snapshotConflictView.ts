@@ -63,6 +63,14 @@ export const CHECKIN_REFUSED_STALE_CONFLICT =
   "Check-in recusado: a disputa mudou de novo desde que você abriu esta tela — veja os " +
   "detalhes atualizados antes de escolher.";
 
+/** Copy calma mostrada na fase `ready` depois que a tela recarrega sozinha por causa de um
+ *  `CHECKIN_REFUSED_STALE_CONFLICT` (ver `SnapshotConflictScreen.tsx`) — derivada da MESMA frase
+ *  do backend, mas descrevendo o resultado do recarregamento (já aconteceu) em vez da recusa (o
+ *  que aconteceria se o dono clicasse). Sem isto, o dono clica, vê o spinner de carregamento e a
+ *  tela volta com listas diferentes sem uma palavra — "meu clique não fez nada". */
+export const STALE_CONFLICT_RELOADED_NOTICE =
+  "A disputa mudou desde que esta tela abriu — os detalhes abaixo já são os atualizados.";
+
 /** Prefixo estável da recusa de restauração por schema mais novo (espelha o literal usado em
  *  `resolve_conflict_use_remote_core`, Rust) — verbatim atrás dele, nunca a frase inteira casada
  *  por igualdade (as versões de schema variam a cada par de aparelhos). */
