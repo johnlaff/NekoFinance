@@ -52,6 +52,7 @@ import {
   driveCheckinCmd,
   driveCheckinErrorMessage,
   driveCheckinLabel,
+  CHECKIN_REFUSED_CONFLICT,
   driveCheckoutLabel,
   driveCheckoutOutcomeWarning,
   DRIVE_CHECKIN_UP_TO_DATE_NOTE,
@@ -72,6 +73,7 @@ import {
   type MiaConsentView,
 } from "./configView";
 import { Line, SecHead } from "./configLine";
+import { openSnapshotConflict } from "../features/snapshot-conflict/snapshotConflictStore";
 
 // A promessa de privacidade é uma leitura do estado, não um texto fixo: com a conversa ligada, a
 // linha da Mia deixaria de ser verdadeira se continuasse afirmando que nada sai do aparelho.
@@ -867,6 +869,10 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
       // Escopo `drive.appdata` faltando: leva ao fluxo de reconexão, nunca a um erro cru.
       if (errorText(e) === NEEDS_DRIVE_REAUTH) {
         setNeedsReauth(true);
+      } else if (errorText(e) === CHECKIN_REFUSED_CONFLICT) {
+        // Divergência dupla: nunca um erro de linha — abre a tela de conflito (ADR-0015) com a
+        // lista de gestos deste aparelho antes de qualquer escolha.
+        openSnapshotConflict();
       } else {
         setErr(driveCheckinErrorMessage(e));
       }

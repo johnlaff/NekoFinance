@@ -10,7 +10,7 @@ Convergência por **snapshot íntegro com lease**, no modelo consagrado por gera
 
 - **Check-out ao abrir**: o app consulta o manifest remoto no `appDataFolder` do Drive; se a cópia remota avançou além da base local, baixa e restaura antes de qualquer gesto.
 - **Check-in ao fechar e após gesto material**: o app exporta um snapshot atômico (o caminho `VACUUM INTO` do backup existente) e o sobe com um manifest de sequência — **recusando a subida se o remoto avançou desde a sua base** (a mesma semântica do force-with-lease do git).
-- **Conflito nunca é silencioso**: no raro caso de dois aparelhos terem editado a partir da mesma base, o app apresenta a escolha do vencedor **com a lista dos gestos que o lado perdedor tinha** (lida do `sync_log`), para o dono refazer o pouco que se perde sabendo exatamente o quê.
+- **Conflito nunca é silencioso**: no raro caso de dois aparelhos terem editado a partir da mesma base, o app apresenta a escolha do vencedor **com a lista dos gestos que o lado perdedor tinha** (lida do `sync_log`, hoje só import/write-back da planilha — split, tag, reembolso, fatura, teto e cenário ainda não ficam registrados ali), para o dono refazer o que vale a pena sabendo o recorte real do que a lista cobre.
 - **Offline pleno**: cada aparelho tem o banco inteiro; sem rede, tudo funciona — o check-in espera a conexão voltar.
 
 O perímetro de confiança não muda: o dado já vive no Google pela planilha; o snapshot vive no `appDataFolder`, invisível e com escopo OAuth estreito.

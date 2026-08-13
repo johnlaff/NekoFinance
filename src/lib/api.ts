@@ -1186,6 +1186,74 @@ export function driveCheckin(
   return invoke("drive_checkin", { clientId, clientSecret: clientSecret ?? null });
 }
 
+/** Um gesto do `sync_log` deste aparelho desde a última base em comum entre os dois aparelhos —
+ *  o que a tela de conflito mostra antes do dono escolher o vencedor. */
+export interface DriveConflictGesture {
+  at: string;
+  event_type: string;
+  entity_type: string;
+  source_sheet: string | null;
+}
+
+/** O manifest do OUTRO aparelho que disputa a posse — mesma forma do manifest publicado por este
+ *  (`SnapshotManifest`, Rust), nunca o deste aparelho. */
+export interface DriveConflictRemoteManifest {
+  device_id: string;
+  sequence: number;
+  created_at: string;
+  app_version: string;
+  schema_version: number;
+}
+
+/** Detalhes de um conflito de lease (ADR-0015): o manifest do outro aparelho e a lista dos gestos
+ *  de CADA lado desde a última base em comum — a escolha é simétrica (manter este ou usar o
+ *  outro), então o que se perde em cada direção precisa estar visível antes de escolher. Só faz
+ *  sentido pedir depois que `driveCheckin` recusar com o veredito de conflito. */
+export interface DriveConflictDetails {
+  remote_manifest: DriveConflictRemoteManifest;
+  local_gestures: DriveConflictGesture[];
+  remote_gestures: DriveConflictGesture[];
+}
+
+export function driveConflictDetails(
+  clientId: string,
+  clientSecret?: string,
+): Promise<DriveConflictDetails> {
+  return invoke("drive_conflict_details", {
+    clientId,
+    clientSecret: clientSecret ?? null,
+  });
+}
+
+export type DriveConflictChoice = "keep_local" | "use_remote";
+
+/** Desfecho de resolver um conflito: a sequência que passou a ser a base, e se este aparelho
+ *  precisa reiniciar para o resultado valer — só `use_remote` troca o arquivo ativo debaixo do
+ *  banco já em uso pela sessão corrente. */
+export interface DriveConflictResolution {
+  choice: DriveConflictChoice;
+  requires_restart: boolean;
+  sequence: number;
+}
+
+export function resolveDriveConflict(
+  clientId: string,
+  choice: DriveConflictChoice,
+  // A sequência do manifest remoto que a TELA mostrou (`DriveConflictDetails.remote_manifest.sequence`)
+  // — o backend recusa a resolução quando o remoto de fato encontrado agora diverge desta, em vez
+  // de rebuscar e publicar/restaurar por cima de um avanço que o dono nunca viu (consentimento
+  // obsoleto, ADR-0015).
+  seenRemoteSequence: number,
+  clientSecret?: string,
+): Promise<DriveConflictResolution> {
+  return invoke("resolve_drive_conflict", {
+    clientId,
+    clientSecret: clientSecret ?? null,
+    choice,
+    seenRemoteSequence,
+  });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke("list_tags_cmd");
 }

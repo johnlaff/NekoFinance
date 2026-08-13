@@ -924,10 +924,52 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
       last_sync_at: null,
     };
 
+    // Conflito do snapshot no Drive (ADR-0015): estado "ready" com listas povoadas dos dois
+    // lados — o fixture que `SnapshotConflictScreen` busca ao montar. A tela nunca monta sozinha
+    // neste mock (só quando um cenário chama `openSnapshotConflict()` explicitamente), então o
+    // default aqui é inofensivo para as demais specs.
+    const DRIVE_CONFLICT_DETAILS = {
+      remote_manifest: {
+        device_id: "abcdef12-3456-7890-abcd-ef1234567890",
+        sequence: 5,
+        created_at: "2026-06-10T08:00:00Z",
+        app_version: "0.2.1",
+        schema_version: 7,
+      },
+      local_gestures: [
+        {
+          at: "2026-06-10 07:40:00",
+          event_type: "write_back",
+          entity_type: "transaction",
+          source_sheet: "Saídas",
+        },
+        {
+          at: "2026-06-09 21:10:00",
+          event_type: "import",
+          entity_type: "transaction",
+          source_sheet: "Diário",
+        },
+      ],
+      remote_gestures: [
+        {
+          at: "2026-06-10 07:00:00",
+          event_type: "import",
+          entity_type: "transaction",
+          source_sheet: "Cartão",
+        },
+      ],
+    };
+
     const responses: Record<string, unknown> = {
       check_auth_status: "disconnected",
       get_dashboard_summary: SUMMARY,
       get_forecast: FORECAST,
+      drive_conflict_details: DRIVE_CONFLICT_DETAILS,
+      resolve_drive_conflict: {
+        choice: "keep_local",
+        requires_restart: false,
+        sequence: 6,
+      },
       get_daily_budget_cmd: {
         per_day_cents: 4300,
         divisor_days: 30,
