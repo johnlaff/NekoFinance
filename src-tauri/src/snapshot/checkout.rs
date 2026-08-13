@@ -398,6 +398,22 @@ pub(crate) async fn probe_newer_snapshot_on_focus(
         state::adopt_own_sequence(pool, remote_manifest.sequence).await?;
         return state::record_checkout_outcome(pool, None, None).await;
     }
+    // Mesma checagem de `checkout_on_open`: um schema remoto mais novo nunca é "reabra o app e
+    // pegue a versão nova" — o boot vai recusar de novo pelo mesmo motivo. Sem este ramo, a sonda
+    // rebaixava o aviso correto do boot ("atualize o app") para uma instrução de reabrir que
+    // nunca converge, prendendo o dono num loop de fechar/abrir.
+    let local_schema = local_schema_version(pool).await?;
+    if remote_manifest.schema_version > local_schema {
+        return state::record_checkout_outcome(
+            pool,
+            Some("refused_newer_schema"),
+            Some(&format!(
+                "{local_schema}:{}",
+                remote_manifest.schema_version
+            )),
+        )
+        .await;
+    }
     state::record_checkout_outcome(pool, Some(NEWER_SNAPSHOT_AVAILABLE_OUTCOME), None).await
 }
 
@@ -1353,6 +1369,71 @@ mod tests {
         assert_eq!(
             after.last_checkout_outcome.as_deref(),
             Some(NEWER_SNAPSHOT_AVAILABLE_OUTCOME)
+        );
+        assert_eq!(
+            after.base_sequence, 0,
+            "a sonda de foco nunca adota/avança a base de outro aparelho — só o boot restaura"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_records_refused_newer_schema_instead_of_newer_available_when_remote_schema_is_newer()
+     {
+        // Cenário do reinício em loop: o boot recusou por schema mais novo (aviso correto), e a
+        // sonda de foco seguinte lê o MESMO manifest de novo. Sem checar schema, ela rebaixava o
+        // desfecho para "newer_available" — que instrui reabrir o app, o que nunca resolve nada
+        // porque o schema remoto continua incompatível. A sonda precisa gravar o MESMO desfecho
+        // que `checkout_on_open` grava para este caso: `refused_newer_schema`.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 1,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "9.9.9".into(),
+            schema_version: local_schema + 1000,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de download do snapshot: a sonda de foco NUNCA baixa/troca o arquivo — só
+        // avisa, mesmo quando o aviso é a recusa por schema.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(
+            after.last_checkout_outcome.as_deref(),
+            Some("refused_newer_schema"),
+            "schema incompatível nunca pode virar \"newer_available\" — a instrução de reabrir \
+             o app não resolve incompatibilidade de schema e prende o dono num loop"
+        );
+        assert_eq!(
+            after.last_checkout_outcome_detail.as_deref(),
+            Some(format!("{local_schema}:{}", local_schema + 1000).as_str())
         );
         assert_eq!(
             after.base_sequence, 0,
