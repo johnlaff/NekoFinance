@@ -55,6 +55,7 @@ import {
   CHECKIN_REFUSED_CONFLICT,
   driveCheckoutLabel,
   driveCheckoutOutcomeWarning,
+  driveUnpublishedChangesNote,
   DRIVE_CHECKIN_UP_TO_DATE_NOTE,
   fetchAppInfo,
   fetchConfigSetting,
@@ -850,6 +851,7 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
   const [note, setNote] = useState<string | null>(null);
   const [needsReauth, setNeedsReauth] = useState(false);
   const checkoutWarning = driveCheckoutOutcomeWarning(info);
+  const unpublishedNote = driveUnpublishedChangesNote(info);
 
   async function doCheckin() {
     if (!GOOGLE_CLIENT_ID) return;
@@ -899,6 +901,10 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
               <span role="status" className="config__note">
                 {note}
               </span>
+            ) : unpublishedNote ? (
+              // Estado persistido (ADR-0015, #427), não feedback de um clique — só aparece quando
+              // não há nada mais fresco (erro/nota de uma tentativa manual) para mostrar.
+              <span className="config__note">{unpublishedNote}</span>
             ) : null}
           </>
         }

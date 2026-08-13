@@ -287,13 +287,29 @@ pub fn run() {
             // Focus-triggered probe: fires when the user switches back to the app (e.g. from the
             // spreadsheet in the browser). Only focus probes use MIN_FOCUS_DEBOUNCE_SECS; the
             // interval loop keeps its own sleep cadence.
+            //
+            // O MESMO listener também dispara a sonda leve de check-out do snapshot (ADR-0015) e
+            // o check-in ao fechar o app — os gatilhos automáticos que faltavam, além do
+            // check-out ao abrir (já rodou acima, antes deste bloco) e do loop de gesto material
+            // (logo abaixo).
             if let Some(window) = app.get_webview_window("main") {
                 let pool_focus = pool.clone();
                 let app_dir_focus = app_dir.clone();
                 let guard_focus = import_guard.clone();
                 let handle_focus = app.handle().clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(true) = event {
+
+                let pool_close = pool.clone();
+                let app_dir_close = app_dir.clone();
+                let guard_close = import_guard.clone();
+                let handle_close = app.handle().clone();
+                let window_close = window.clone();
+                // A troca por `window.close()` dentro do handler dispara um NOVO `CloseRequested`
+                // — sem esta guarda, o segundo disparo tentaria prevenir/reagir de novo e o app
+                // nunca fecharia de verdade. `true` só na segunda vez em diante: deixa passar.
+                let closing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+                window.on_window_event(move |event| match event {
+                    tauri::WindowEvent::Focused(true) => {
                         let pool = pool_focus.clone();
                         let app_dir = app_dir_focus.clone();
                         let guard = guard_focus.clone();
@@ -311,12 +327,61 @@ pub fn run() {
                                 eprintln!("[sync/focus] probe error: {e}");
                             }
                         });
+
+                        // Sonda leve do snapshot (nunca baixa/troca o arquivo ativo mid-session —
+                        // só o boot restaura de verdade, ver `checkout::probe_newer_snapshot_on_focus`).
+                        let pool_snap = pool_focus.clone();
+                        let app_dir_snap = app_dir_focus.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) =
+                                snapshot::checkout::probe_newer_snapshot_on_focus_best_effort(
+                                    &pool_snap,
+                                    &app_dir_snap,
+                                )
+                                .await
+                            {
+                                eprintln!("[snapshot/focus] probe error: {e}");
+                            }
+                        });
                     }
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        if closing.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        api.prevent_close();
+                        let pool = pool_close.clone();
+                        let app_dir = app_dir_close.clone();
+                        let guard = guard_close.clone();
+                        let handle = handle_close.clone();
+                        let window = window_close.clone();
+                        tauri::async_runtime::spawn(async move {
+                            // Melhor esforço com teto de espera (offline pleno) — nunca trava o
+                            // fechamento do app esperando rede voltar.
+                            snapshot::checkin_task::run_checkin_on_close_best_effort(
+                                &pool, &app_dir, &handle, &guard,
+                            )
+                            .await;
+                            if let Err(e) = window.close() {
+                                eprintln!("[snapshot/checkin:close] falha ao fechar a janela: {e}");
+                            }
+                        });
+                    }
+                    _ => {}
                 });
             }
 
             sync_task::spawn_background_sync(
                 sync_pool,
+                app_dir.clone(),
+                app.handle().clone(),
+                import_guard.clone(),
+            );
+
+            // Check-in automático depois de um gesto material (import/write-back da planilha, o
+            // mesmo que `sync_log` já registra — ADR-0015). O check-in ao FECHAR já está fiado
+            // no listener de foco/fechar acima.
+            snapshot::checkin_task::spawn_material_gesture_checkin_loop(
+                pool.clone(),
                 app_dir.clone(),
                 app.handle().clone(),
                 import_guard,

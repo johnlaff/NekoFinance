@@ -72,6 +72,30 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> Result<SqlitePool, Str
     Ok(pool)
 }
 
+/// Resolve client id → token com escopo `drive.appdata` → cliente pronto, em modo melhor esforço
+/// (ADR-0015): qualquer motivo de NÃO tentar (sem client id configurado, token sem escopo/refresh
+/// falhou) devolve `None` em silêncio — "sync ainda não configurado", nunca uma falha. Compartilhado
+/// pelos três pontos de entrada que tentam o Drive sem um clique explícito do dono: o check-out no
+/// boot, a sonda de foco, e o check-in automático (`checkin_task::run_checkin_attempt_core`).
+pub(crate) async fn resolve_drive_client_best_effort(
+    pool: &SqlitePool,
+    app_dir: &Path,
+) -> Option<DriveSnapshotClient> {
+    let client_id = crate::sync_task::resolve_client_id(pool).await?;
+    let client_secret = crate::oauth::pkce::resolve_client_secret(None);
+    let token = crate::oauth::token_store::ensure_drive_scope(
+        app_dir,
+        &client_id,
+        client_secret.as_deref(),
+    )
+    .await
+    .ok()?;
+    Some(DriveSnapshotClient::new(
+        token,
+        super::transport::production_base_url(),
+    ))
+}
+
 /// Núcleo testável: `pool` já migrado no arquivo `db_path`, `drive` já autenticado. Devolve
 /// `Err` SÓ quando não sobra pool utilizável nenhum — a troca de arquivo teve sucesso, mas
 /// reabrir uma conexão nela falhou. Este é o mesmo tipo de falha fatal que a abertura inicial do
@@ -91,6 +115,20 @@ pub async fn checkout_on_open(
             });
         }
     };
+
+    // Gate (ADR-0015): um conflito descoberto por um check-in (automático ou manual) e ainda não
+    // resolvido pelo dono nunca pode ser sobrescrito em silêncio por um check-out normal — a MESMA
+    // disciplina que já gate os gatilhos automáticos de check-in (`checkin_task`). Sem isto, fechar
+    // o app com uma disputa pendente e reabrir mais tarde (com o remoto tendo avançado ainda mais)
+    // faria este check-out ler `Pull` e restaurar por cima do lado local da disputa, sem o dono
+    // nunca ter escolhido — a mesma sobrescrita silenciosa que o lease existe para impedir. A tela
+    // de conflito é quem resolve isto, nunca o boot.
+    if local_state.conflict_pending_since.is_some() {
+        return Ok(CheckoutResult {
+            pool,
+            outcome: Ok(CheckoutOutcome::NothingToDo),
+        });
+    }
 
     let remote = match drive.fetch_manifest().await {
         Ok(m) => m,
@@ -273,40 +311,23 @@ pub async fn checkout_on_open(
     })
 }
 
-/// O gancho de verdade que `lib.rs` chama na abertura do app: resolve client id/secret/token pelo
-/// MESMO caminho do sync de fundo (`sync_task::resolve_client_id`) e SILENCIA qualquer motivo de
-/// não tentar — nunca conectou, sem client id configurado, token sem o escopo `drive.appdata`.
-/// Nenhum desses é uma falha do check-out em si, é "sync ainda não configurado" (offline pleno).
-/// Uma falha DEPOIS de decidir tentar (rede, integridade) continua reportada em `outcome`, nunca
-/// engolida — só a decisão de TENTAR é best-effort, não o resultado da tentativa.
+/// O gancho de verdade que `lib.rs` chama na abertura do app: resolve o cliente do Drive via
+/// [`resolve_drive_client_best_effort`] e SILENCIA qualquer motivo de não tentar — nunca conectou,
+/// sem client id configurado, token sem o escopo `drive.appdata`. Nenhum desses é uma falha do
+/// check-out em si, é "sync ainda não configurado" (offline pleno). Uma falha DEPOIS de decidir
+/// tentar (rede, integridade) continua reportada em `outcome`, nunca engolida — só a decisão de
+/// TENTAR é best-effort, não o resultado da tentativa.
 pub async fn checkout_on_open_best_effort(
     pool: SqlitePool,
     db_path: &Path,
     app_dir: &Path,
 ) -> Result<CheckoutResult, String> {
-    let Some(client_id) = crate::sync_task::resolve_client_id(&pool).await else {
+    let Some(drive) = resolve_drive_client_best_effort(&pool, app_dir).await else {
         return Ok(CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
         });
     };
-    let client_secret = crate::oauth::pkce::resolve_client_secret(None);
-    let token = match crate::oauth::token_store::ensure_drive_scope(
-        app_dir,
-        &client_id,
-        client_secret.as_deref(),
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(_) => {
-            return Ok(CheckoutResult {
-                pool,
-                outcome: Ok(CheckoutOutcome::NothingToDo),
-            });
-        }
-    };
-    let drive = DriveSnapshotClient::new(token, super::transport::production_base_url());
     let result = checkout_on_open(pool, db_path, &drive).await?;
 
     // Persiste o desfecho para a UI de Conexão (ADR-0015): a recusa por schema mais
@@ -327,6 +348,103 @@ pub async fn checkout_on_open_best_effort(
     }
 
     Ok(result)
+}
+
+/// Rótulo fechado gravado em `snapshot_state.last_checkout_outcome` pela sonda de FOCO (nunca por
+/// `checkout_on_open`): remoto avançou além da base local, mas a sonda não baixa nem troca o
+/// arquivo — só avisa. Mesma família de `outcome_warning_fields`, uma constante própria porque
+/// nasce de um caminho diferente (nunca dentro de `CheckoutOutcome`, que é sempre resultado de uma
+/// tentativa real de restauração).
+pub const NEWER_SNAPSHOT_AVAILABLE_OUTCOME: &str = "newer_available";
+
+/// Núcleo testável da sonda de FOCO (ADR-0015): consulta o manifest remoto e AVISA
+/// quando ele avançou além da base local — mas NUNCA baixa nem troca o banco ativo. Diferente do
+/// check-out no boot (`checkout_on_open`), aqui o pool já está `app.manage()`-do e em uso pelo app
+/// inteiro; trocar o arquivo debaixo dele exigiria o mesmo "reinicie o app" que
+/// `resolve_conflict_use_remote_core` já usa para a escolha explícita de conflito — fazer isso
+/// silenciosamente a cada foco seria pior que só avisar e deixar o próximo reinício convergir de
+/// verdade (o check-out do boot já faz isso sozinho).
+///
+/// A mesma guarda estreita do próprio `device_id` de `checkout_on_open` se aplica aqui: quando o
+/// manifest remoto é o NOSSO check-in que morreu entre o upload confirmado e a gravação local
+/// (`remote.sequence == base + 1`), não é uma versão mais nova de OUTRO aparelho — é segura de
+/// adotar sem baixar nada, porque só atualiza bookkeeping local, nunca troca arquivo.
+pub(crate) async fn probe_newer_snapshot_on_focus(
+    pool: &SqlitePool,
+    drive: &DriveSnapshotClient,
+) -> Result<(), String> {
+    let local_state = state::load_or_init(pool).await?;
+    // Mesmo gate de `checkout_on_open` (ADR-0015): uma disputa ainda não resolvida pelo dono nunca
+    // pode ser mexida por um gatilho automático — nem para restaurar, nem para só avisar.
+    if local_state.conflict_pending_since.is_some() {
+        return Ok(());
+    }
+    let remote = drive.fetch_manifest().await?;
+    let verdict = lease::decide(
+        local_state.base_sequence,
+        local_state.base_sequence,
+        remote.as_ref(),
+    );
+    if verdict != lease::LeaseVerdict::Pull {
+        // Sem disputa nenhuma agora (a leitura é FRESCA) — qualquer aviso de uma sonda anterior
+        // não se sustenta mais.
+        return state::record_checkout_outcome(pool, None, None).await;
+    }
+    let remote_manifest =
+        remote.expect("veredito Pull do árbitro implica manifest remoto presente");
+    if remote_manifest.device_id == local_state.device_id
+        && remote_manifest.sequence == local_state.base_sequence + 1
+    {
+        state::adopt_own_sequence(pool, remote_manifest.sequence).await?;
+        return state::record_checkout_outcome(pool, None, None).await;
+    }
+    // Mesma checagem de `checkout_on_open`: um schema remoto mais novo nunca é "reabra o app e
+    // pegue a versão nova" — o boot vai recusar de novo pelo mesmo motivo. Sem este ramo, a sonda
+    // rebaixava o aviso correto do boot ("atualize o app") para uma instrução de reabrir que
+    // nunca converge, prendendo o dono num loop de fechar/abrir.
+    let local_schema = local_schema_version(pool).await?;
+    if remote_manifest.schema_version > local_schema {
+        return state::record_checkout_outcome(
+            pool,
+            Some("refused_newer_schema"),
+            Some(&format!(
+                "{local_schema}:{}",
+                remote_manifest.schema_version
+            )),
+        )
+        .await;
+    }
+    state::record_checkout_outcome(pool, Some(NEWER_SNAPSHOT_AVAILABLE_OUTCOME), None).await
+}
+
+/// Nunca sonda foco mais rápido que isto — o mesmo espírito de `sync_task::MIN_FOCUS_DEBOUNCE_SECS`
+/// (evita uma rajada de chamadas ao Drive num alt-tab rápido), com uma chave própria porque o eixo
+/// do snapshot é independente do probe da planilha.
+const FOCUS_PROBE_DEBOUNCE_SECS: u64 = 60;
+const LAST_FOCUS_PROBE_AT_KEY: &str = "snapshot_last_focus_probe_at";
+
+/// O gancho de verdade que `lib.rs` chama quando a janela ganha foco: debounce próprio (mesma
+/// cadência do probe de foco da planilha) e resolve o cliente do Drive via
+/// [`resolve_drive_client_best_effort`] — qualquer motivo de não tentar (nunca conectou, sem
+/// escopo) é silencioso. Uma falha DEPOIS de decidir tentar (rede, integridade) é logada pelo
+/// chamador, nunca engolida aqui.
+pub async fn probe_newer_snapshot_on_focus_best_effort(
+    pool: &SqlitePool,
+    app_dir: &Path,
+) -> Result<(), String> {
+    let now = crate::sync_task::now_unix();
+    if let Some(raw) = crate::commands::app_setting_get(pool, LAST_FOCUS_PROBE_AT_KEY).await?
+        && let Ok(last) = raw.trim().parse::<u64>()
+        && now.saturating_sub(last) < FOCUS_PROBE_DEBOUNCE_SECS
+    {
+        return Ok(());
+    }
+    crate::commands::app_setting_set(pool, LAST_FOCUS_PROBE_AT_KEY, &now.to_string()).await?;
+
+    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await else {
+        return Ok(());
+    };
+    probe_newer_snapshot_on_focus(pool, &drive).await
 }
 
 /// Mapeia o desfecho do check-out para o rótulo fechado que `snapshot_state.last_checkout_outcome`
@@ -1202,6 +1320,295 @@ mod tests {
 
         let state_after = state::load_or_init(&result.pool).await.unwrap();
         assert_eq!(state_after.base_sequence, 7, "base local não regride");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- probe_newer_snapshot_on_focus -----------------------------------------------------
+
+    #[tokio::test]
+    async fn focus_probe_flags_newer_available_without_downloading_when_remote_advanced() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 1,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de download do snapshot: a sonda de foco NUNCA baixa/troca o arquivo —
+        // só avisa. Uma tentativa de download bateria numa rota não-mockada (501).
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(
+            after.last_checkout_outcome.as_deref(),
+            Some(NEWER_SNAPSHOT_AVAILABLE_OUTCOME)
+        );
+        assert_eq!(
+            after.base_sequence, 0,
+            "a sonda de foco nunca adota/avança a base de outro aparelho — só o boot restaura"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_records_refused_newer_schema_instead_of_newer_available_when_remote_schema_is_newer()
+     {
+        // Cenário do reinício em loop: o boot recusou por schema mais novo (aviso correto), e a
+        // sonda de foco seguinte lê o MESMO manifest de novo. Sem checar schema, ela rebaixava o
+        // desfecho para "newer_available" — que instrui reabrir o app, o que nunca resolve nada
+        // porque o schema remoto continua incompatível. A sonda precisa gravar o MESMO desfecho
+        // que `checkout_on_open` grava para este caso: `refused_newer_schema`.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 1,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "9.9.9".into(),
+            schema_version: local_schema + 1000,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de download do snapshot: a sonda de foco NUNCA baixa/troca o arquivo — só
+        // avisa, mesmo quando o aviso é a recusa por schema.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(
+            after.last_checkout_outcome.as_deref(),
+            Some("refused_newer_schema"),
+            "schema incompatível nunca pode virar \"newer_available\" — a instrução de reabrir \
+             o app não resolve incompatibilidade de schema e prende o dono num loop"
+        );
+        assert_eq!(
+            after.last_checkout_outcome_detail.as_deref(),
+            Some(format!("{local_schema}:{}", local_schema + 1000).as_str())
+        );
+        assert_eq!(
+            after.base_sequence, 0,
+            "a sonda de foco nunca adota/avança a base de outro aparelho — só o boot restaura"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_adopts_own_sequence_silently_without_flagging_newer_available() {
+        // Mesma janela estreita de `checkout_on_open` (ADR-0015): o manifest remoto é o NOSSO
+        // check-in que morreu entre o upload confirmado e a gravação local — seguro adotar sem
+        // baixar nada, e não é "uma versão mais nova" de outro aparelho para avisar.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_before = state::load_or_init(&pool).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: local_before.device_id.clone(),
+            sequence: 1,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.base_sequence, 1, "a base alcança a própria sequência");
+        assert!(
+            after.last_checkout_outcome.is_none(),
+            "conteúdo já é nosso — não é aviso de versão mais nova de outro aparelho"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_clears_a_stale_warning_when_the_fresh_read_is_up_to_date() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        // Aviso de uma sonda ANTERIOR, que a leitura fresca de agora precisa derrubar.
+        state::record_checkout_outcome(&pool, Some(NEWER_SNAPSHOT_AVAILABLE_OUTCOME), None)
+            .await
+            .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        // Nenhum snapshot publicado ainda: remoto ausente, base em 0 — `UpToDate`.
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert!(after.last_checkout_outcome.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checkout_on_open_refuses_to_restore_while_a_conflict_is_pending() {
+        // ADR-0015: uma disputa descoberta por um check-in e ainda não resolvida pelo dono nunca
+        // pode ser sobrescrita em silêncio por um check-out — nem no boot. Sem este gate, fechar o
+        // app com o conflito pendente e reabrir mais tarde (remoto tendo avançado ainda mais)
+        // bateria em `Pull` e restauraria por cima do lado local da disputa.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        state::load_or_init(&pool).await.unwrap();
+        state::record_conflict_pending(&pool, Some("2026-08-13T09:00:00Z"))
+            .await
+            .unwrap();
+
+        // Nenhum mock registrado: se o gate não interceptasse ANTES de consultar o remoto, a
+        // chamada bateria numa rota não-mockada e o teste acusaria a diferença.
+        let server = mockito::Server::new_async().await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("checkout_on_open não deve falhar");
+        assert_eq!(result.outcome, Ok(CheckoutOutcome::NothingToDo));
+
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 0, "nada foi restaurado");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_is_a_silent_no_op_while_a_conflict_is_pending() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        state::load_or_init(&pool).await.unwrap();
+        state::record_conflict_pending(&pool, Some("2026-08-13T09:00:00Z"))
+            .await
+            .unwrap();
+
+        // Nenhum mock registrado: o gate precisa interceptar antes de qualquer chamada ao Drive.
+        let server = mockito::Server::new_async().await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert!(
+            after.last_checkout_outcome.is_none(),
+            "conflito pendente: a sonda não deve nem tentar avisar"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_best_effort_is_debounced() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste-inexistente")
+            .await
+            .unwrap();
+        // Marca uma sonda como tendo rodado AGORA — a próxima chamada, dentro do intervalo de
+        // debounce, precisa ser um no-op sem sequer tentar resolver token/rede.
+        let now = crate::sync_task::now_unix();
+        crate::commands::app_setting_set(&pool, LAST_FOCUS_PROBE_AT_KEY, &now.to_string())
+            .await
+            .unwrap();
+
+        // Sem token no keyring de teste: se o debounce NÃO interceptasse, a tentativa de resolver
+        // o cliente falharia (silenciosamente) do mesmo jeito — então a asserção observável é a
+        // marca do debounce, que só o CAMINHO QUE PASSOU pelo debounce escreve de novo.
+        probe_newer_snapshot_on_focus_best_effort(&pool, &dir)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let raw = crate::commands::app_setting_get(&pool, LAST_FOCUS_PROBE_AT_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            raw,
+            now.to_string(),
+            "dentro do debounce: a marca não deve avançar"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

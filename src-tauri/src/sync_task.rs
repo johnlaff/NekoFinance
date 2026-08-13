@@ -132,7 +132,7 @@ pub(crate) async fn resolve_client_id(pool: &SqlitePool) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
-fn now_unix() -> u64 {
+pub(crate) fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

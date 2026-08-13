@@ -67,6 +67,14 @@ pub struct DriveCheckinInfo {
     pub last_checkout_outcome: Option<String>,
     /// Complemento do desfecho acima (versões de schema na recusa, mensagem de erro na falha).
     pub last_checkout_outcome_detail: Option<String>,
+    /// Há mudanças locais que ainda não foram publicadas (ADR-0015) — calculado a
+    /// cada tentativa de check-in (automática ou manual), honesto mesmo quando a tentativa mais
+    /// recente falhou ou foi recusada.
+    pub pending_local_changes: bool,
+    /// Há uma disputa `Conflict` pendente de resolução — enquanto `true`, os gatilhos automáticos
+    /// (foco, gesto material, fechar) não tentam nada; só a escolha do dono na tela de conflito
+    /// limpa este estado.
+    pub conflict_pending: bool,
     pub this_device_id: String,
 }
 
@@ -119,6 +127,8 @@ pub(crate) async fn last_drive_checkin_core(pool: &SqlitePool) -> Result<DriveCh
         last_checkout_device_id: st.last_checkout_device_id,
         last_checkout_outcome: st.last_checkout_outcome,
         last_checkout_outcome_detail: st.last_checkout_outcome_detail,
+        pending_local_changes: st.pending_local_changes,
+        conflict_pending: st.conflict_pending_since.is_some(),
         this_device_id: st.device_id,
     })
 }
@@ -147,6 +157,10 @@ pub(crate) async fn drive_checkin_core(
     let (export_hash, db_bytes) = export_candidate_snapshot(pool, app_dir).await?;
 
     let content_changed = local_state.last_export_sha256.as_deref() != Some(export_hash.as_str());
+    // Persistido a cada tentativa (ADR-0015), sucesso ou falha: a UI de Conexão
+    // precisa mostrar "não publicado" mesmo quando a tentativa abaixo falhar/for recusada — só
+    // uma publicação de fato (`state::record_checkin`, abaixo) limpa isto de novo.
+    state::record_pending_local_changes(pool, content_changed).await?;
     // Cada publicação reivindica a PRÓXIMA sequência a partir da base local — só quando o
     // conteúdo de fato mudou; senão o candidato fica na própria base e o árbitro lê "em dia".
     let candidate_sequence = if content_changed {
@@ -165,7 +179,10 @@ pub(crate) async fn drive_checkin_core(
         lease::LeaseVerdict::Push => {}
         lease::LeaseVerdict::UpToDate => {
             // Sucesso, não erro (ADR-0015): nada de novo para publicar. O estado local não
-            // muda — devolve exatamente o que já estava registrado.
+            // muda — devolve exatamente o que já estava registrado. `UpToDate` só é alcançável
+            // com `content_changed = false` (ver a derivação de `candidate_sequence` acima), e
+            // nunca é o veredito `Conflict` — qualquer disputa registrada antes já não se sustenta.
+            state::record_conflict_pending(pool, None).await?;
             return Ok(DriveCheckinResult {
                 info: DriveCheckinInfo {
                     last_checkin_at: local_state.last_checkin_at,
@@ -174,6 +191,8 @@ pub(crate) async fn drive_checkin_core(
                     last_checkout_device_id: local_state.last_checkout_device_id,
                     last_checkout_outcome: local_state.last_checkout_outcome,
                     last_checkout_outcome_detail: local_state.last_checkout_outcome_detail,
+                    pending_local_changes: false,
+                    conflict_pending: false,
                     this_device_id: local_state.device_id,
                 },
                 published: false,
@@ -183,7 +202,13 @@ pub(crate) async fn drive_checkin_core(
         // próxima abertura, ver `snapshot::checkout`) e Conflict não sugere um gesto que
         // descartaria trabalho local sem aviso.
         lease::LeaseVerdict::Pull => return Err(CHECKIN_REFUSED_PULL.into()),
-        lease::LeaseVerdict::Conflict => return Err(CHECKIN_REFUSED_CONFLICT.into()),
+        lease::LeaseVerdict::Conflict => {
+            // Gate dos gatilhos automáticos (ADR-0015): persistido para que
+            // foco/gesto-material/fechar parem de tentar até o dono resolver na tela de conflito.
+            let now = chrono::Utc::now().to_rfc3339();
+            state::record_conflict_pending(pool, Some(&now)).await?;
+            return Err(CHECKIN_REFUSED_CONFLICT.into());
+        }
     }
 
     let schema_version: i64 =
@@ -222,6 +247,10 @@ pub(crate) async fn drive_checkin_core(
             last_checkout_device_id: local_state.last_checkout_device_id,
             last_checkout_outcome: local_state.last_checkout_outcome,
             last_checkout_outcome_detail: local_state.last_checkout_outcome_detail,
+            // `state::record_checkin` (acima) já limpou os dois no banco — refletido aqui sem
+            // reler, mesmo padrão dos outros campos desta struct.
+            pending_local_changes: false,
+            conflict_pending: false,
             this_device_id: local_state.device_id,
         },
         published: true,
@@ -787,6 +816,116 @@ mod tests {
         // Estado local intocado: a base continua 1, nenhuma sequência foi reivindicada em vão.
         let state_after = state::load_or_init(&pool).await.unwrap();
         assert_eq!(state_after.base_sequence, 1);
+
+        // ADR-0015/#427: a UI de Conexão e os gatilhos automáticos precisam saber, sem rede, que
+        // há mudança local não publicada E que uma disputa está pendente.
+        let info = last_drive_checkin_core(&pool).await.unwrap();
+        assert!(
+            info.pending_local_changes,
+            "o conteúdo local mudou desde a base — a recusa não apaga esse fato"
+        );
+        assert!(
+            info.conflict_pending,
+            "o veredito Conflict precisa gatear os gatilhos automáticos até resolução"
+        );
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_conflict_keep_local_clears_pending_local_changes_and_conflict_pending() {
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+        let local = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            1,
+            "2026-08-11T10:00:00Z",
+            &local.device_id,
+            "seed-hash-nao-bate-com-export-real",
+        )
+        .await
+        .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 5,
+            created_at: "2026-08-11T11:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        // Descobre o conflito (mesma configuração do teste acima) — deixa `conflict_pending`
+        // gravado, o estado que a resolução abaixo precisa limpar.
+        let err = drive_checkin_core(&pool, &app_dir, &drive)
+            .await
+            .expect_err("conflito esperado");
+        assert_eq!(err, CHECKIN_REFUSED_CONFLICT);
+        assert!(
+            last_drive_checkin_core(&pool)
+                .await
+                .unwrap()
+                .conflict_pending
+        );
+
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        server
+            .mock("POST", "/upload/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"id": "snap-created"}"#)
+            .create_async()
+            .await;
+        server
+            .mock("PATCH", "/upload/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"id": "man-1"}"#)
+            .create_async()
+            .await;
+
+        resolve_conflict_keep_local_core(&pool, &app_dir, &drive, 5)
+            .await
+            .expect("manter local publica por cima da disputa");
+
+        let info = last_drive_checkin_core(&pool).await.unwrap();
+        assert!(
+            !info.pending_local_changes,
+            "acabou de publicar — nada mais pendente"
+        );
+        assert!(
+            !info.conflict_pending,
+            "a resolução precisa liberar os gatilhos automáticos de novo"
+        );
 
         std::fs::remove_dir_all(&app_dir).ok();
     }

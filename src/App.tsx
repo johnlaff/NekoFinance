@@ -22,13 +22,16 @@ import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { ONBOARDING_KEY } from "./features/onboarding/onboardingView";
 import { SnapshotConflictScreen } from "./features/snapshot-conflict/SnapshotConflictScreen";
 import {
+  openSnapshotConflict,
   snapshotConflictOpenSnapshot,
   subscribeSnapshotConflict,
 } from "./features/snapshot-conflict/snapshotConflictStore";
+import { listenSnapshotSyncDone } from "./features/snapshot-conflict/snapshotConflictView";
 import { UpdateInvitation } from "./features/updater/UpdateInvitation";
+import { fetchLastDriveCheckin } from "./screens/configView";
 import { fetchAppSetting, fetchAuthStatus, type AuthStatus } from "./shell/shellView";
 import { isTauri } from "./lib/env";
-import { useCommand } from "./lib/useCommand";
+import { invalidateCommands, useCommand } from "./lib/useCommand";
 import { fmtCompact } from "./lib/nkFormat";
 
 function App() {
@@ -63,6 +66,34 @@ function App() {
     fetchAppSetting(ONBOARDING_KEY)
       .then((v) => setShowOnboarding(v !== "true"))
       .catch(() => setShowOnboarding(false));
+  }, []);
+
+  // Check-in automático do snapshot no Drive (ADR-0015): o backend tenta sozinho
+  // em foco/gesto material/fechar e emite este evento depois de CADA tentativa. Refaz o cache de
+  // comandos para a tela de Conexão refletir o desfecho sem polling, e abre a tela de conflito
+  // sozinha quando uma disputa surge sem o dono ter clicado em nada — a mesma tela que já abre no
+  // clique manual (`SettingsScreen.tsx`), só que disparada pelo gatilho automático.
+  useEffect(() => {
+    if (!isTauri) return;
+    const unlistenPromise = listenSnapshotSyncDone((payload) => {
+      invalidateCommands();
+      if (payload.conflict_pending) openSnapshotConflict();
+    });
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // Um conflito pode ter ficado pendente de uma sessão ANTERIOR (o dono fechou o app sem
+  // resolver a disputa que um gatilho automático descobriu) — o listener acima só reage a
+  // tentativas DESTA sessão, então o mount confere o estado persistido direto.
+  useEffect(() => {
+    if (!isTauri) return;
+    fetchLastDriveCheckin()
+      .then((info) => {
+        if (info.conflict_pending) openSnapshotConflict();
+      })
+      .catch(() => undefined);
   }, []);
 
   // Dicas numéricas da nav (saldo de hoje, performance do mês). Reusam o cache compartilhado.
