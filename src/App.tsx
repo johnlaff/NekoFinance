@@ -28,6 +28,7 @@ import {
 } from "./features/snapshot-conflict/snapshotConflictStore";
 import { listenSnapshotSyncDone } from "./features/snapshot-conflict/snapshotConflictView";
 import { UpdateInvitation } from "./features/updater/UpdateInvitation";
+import { fetchLastDriveCheckin } from "./screens/configView";
 import { fetchAppSetting, fetchAuthStatus, type AuthStatus } from "./shell/shellView";
 import { isTauri } from "./lib/env";
 import { invalidateCommands, useCommand } from "./lib/useCommand";
@@ -81,6 +82,18 @@ function App() {
     return () => {
       void unlistenPromise.then((unlisten) => unlisten());
     };
+  }, []);
+
+  // Um conflito pode ter ficado pendente de uma sessão ANTERIOR (o dono fechou o app sem
+  // resolver a disputa que um gatilho automático descobriu) — o listener acima só reage a
+  // tentativas DESTA sessão, então o mount confere o estado persistido direto.
+  useEffect(() => {
+    if (!isTauri) return;
+    fetchLastDriveCheckin()
+      .then((info) => {
+        if (info.conflict_pending) openSnapshotConflict();
+      })
+      .catch(() => undefined);
   }, []);
 
   // Dicas numéricas da nav (saldo de hoje, performance do mês). Reusam o cache compartilhado.

@@ -17,16 +17,15 @@
 //! cobrem as funções `_core`; os wrappers públicos são deliberadamente finos o bastante para não
 //! precisarem de teste próprio.
 
-use super::{state, transport::DriveSnapshotClient};
+use super::{checkout::resolve_drive_client_best_effort, state};
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::time::Duration;
 
-/// Nunca cochila menos que isto entre tentativas do loop de gesto material — a cadência da
-/// verificação LOCAL (barata: uma query em `sync_log`), não da publicação em si.
-const MIN_POLL_INTERVAL_SECS: u64 = 20;
-/// Cadência padrão do loop de gesto material.
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 45;
+/// Cadência do loop de gesto material — nunca configurável (ao contrário do intervalo de
+/// `sync_task`, que lê um `app_setting` do dono): a checagem em si é barata (uma query local em
+/// `sync_log`), então um único valor fixo basta.
+const POLL_INTERVAL_SECS: u64 = 45;
 /// Prazo máximo que o check-in ao FECHAR espera por rede antes de deixar o app fechar mesmo assim
 /// — "offline pleno" significa que fechar o app nunca pode travar esperando conexão.
 const CLOSE_CHECKIN_TIMEOUT_SECS: u64 = 5;
@@ -82,21 +81,9 @@ pub(crate) async fn run_checkin_attempt_core(
         return Ok(false);
     }
 
-    let Some(client_id) = crate::sync_task::resolve_client_id(pool).await else {
+    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await else {
         return Ok(false);
     };
-    let client_secret = crate::oauth::pkce::resolve_client_secret(None);
-    let token = match crate::oauth::token_store::ensure_drive_scope(
-        app_dir,
-        &client_id,
-        client_secret.as_deref(),
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(_) => return Ok(false),
-    };
-    let drive = DriveSnapshotClient::new(token, super::transport::production_base_url());
 
     // Serializa contra import/sync de fundo e comandos manuais no pool de 1 conexão — o MESMO
     // guard que `drive_checkin`/`drive_conflict_details`/`resolve_drive_conflict` já usam.
@@ -171,10 +158,9 @@ pub fn spawn_material_gesture_checkin_loop(
     app_handle: tauri::AppHandle,
     guard: std::sync::Arc<crate::sync_task::SyncGuard>,
 ) {
-    let interval_secs = DEFAULT_POLL_INTERVAL_SECS.max(MIN_POLL_INTERVAL_SECS);
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
             if let Err(e) = run_material_gesture_tick(&pool, &app_dir, &app_handle, &guard).await {
                 eprintln!("[snapshot/checkin] tick de gesto material: {e}");
             }
