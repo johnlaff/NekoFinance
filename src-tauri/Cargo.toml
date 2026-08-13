@@ -37,6 +37,10 @@ tauri-plugin-fs = "=2.5.1"
 tauri-plugin-notification = "=2.3.3"
 tauri-plugin-updater = "=2.10.1"
 tauri-plugin-process = "=2.3.1"
+# Só registrado no Android (lib.rs, cfg(target_os = "android")) — o retorno do OAuth por esquema
+# próprio do app (spec 044); desktop permanece no loopback HTTP, sem tocar a configuração de
+# protocolo do instalador.
+tauri-plugin-deep-link = "=2.4.9"
 # Detecção de plataforma no front (`platform()`), para as superfícies sem equivalente Android
 # (updater, lembrete no nível do SO) mostrarem estado honesto de indisponibilidade em vez de
 # silenciar como se tivessem rodado.
@@ -75,12 +79,15 @@ notify-rust = "=4.18.0"
 # síncrona, sem precisar do runtime tokio da feature "tokio".
 fs4 = "=1.1.0"
 
-# O crate `keyring` (linha 65) não tem braço Android (ADR-0014/spec 042) — este plugin local é
-# o adapter real, sobre o Keystore do sistema via `EncryptedSharedPreferences` (Kotlin em
-# `plugins/tauri-plugin-secure-vault/android`). Gated por plataforma para nunca entrar no grafo
-# de dependências do desktop.
+# O cofre de segredos (ADR-0014, secret_vault.rs) não tem braço Android — `keyring` cobre
+# apple-native/windows-native/sync-secret-service e nada mais. Este crate registra um
+# CredentialBuilder para o mesmo `keyring::Entry` já usado pelo desktop, gerando a chave AES não
+# exportável no AndroidKeyStore (via JNI) e cifrando o valor numa SharedPreferences privada — sem
+# plugin Kotlin próprio, porque a leitura do contexto JNI vem de `ndk-context`, já inicializado
+# pelo runtime mobile do Tauri antes de `run()` executar. Rótulo "Experimental" no próprio crate:
+# risco documentado, não uma implementação de crypto própria — a cifra é a API nativa do Keystore.
 [target.'cfg(target_os = "android")'.dependencies]
-tauri-plugin-secure-vault = { path = "plugins/tauri-plugin-secure-vault" }
+android-keyring = "=0.2.0"
 
 [dev-dependencies]
 # Borda HTTP mockada para o transporte do snapshot no Drive (spec 043) — sobe um servidor local

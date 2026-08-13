@@ -36,6 +36,11 @@ use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Antes de qualquer coisa: o back-end do cofre de segredos (ADR-0014) — `token_store`/
+    // `mia::key_store` podem carregar um segredo já no `.setup()` (sync em segundo plano), então
+    // isto precisa registrar antes de o builder ser montado. No-op fora do Android.
+    secret_vault::install_platform_backend();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
@@ -53,10 +58,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
-    // O braço Android do cofre de segredos (ADR-0014, cláusula 2) — sem equivalente desktop, que
-    // já alcança o keyring nativo direto via `keyring::Entry`.
+    // Retorno do OAuth por deep link: só o Android registra o plugin — o desktop segue no
+    // loopback HTTP e nunca precisa de um esquema de protocolo próprio.
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(tauri_plugin_secure_vault::init());
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -179,8 +184,6 @@ pub fn run() {
             commands::check_update_space,
         ])
         .setup(|app| {
-            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-            use std::str::FromStr;
             use tauri::Manager;
             use tauri_plugin_dialog::DialogExt;
 
@@ -191,34 +194,40 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir)?;
             app.manage(AppDataDir(app_dir.clone()));
 
-            // O plugin do cofre já terminou o próprio `setup()` (plugins inicializam antes do
-            // `setup()` do app) — o identificador fica pronto antes de qualquer comando que
-            // possa precisar dele.
+            // Retorno do OAuth por deep link: o listener do plugin fica de pé pelo processo
+            // inteiro; cada `start_oauth_flow` só troca quem está esperando no canal gerenciado
+            // aqui (`commands::oauth_cmds::PendingAndroidOAuthCallback`).
             #[cfg(target_os = "android")]
-            secret_vault::android::install_handle(app.handle().clone());
+            {
+                app.manage(commands::PendingAndroidOAuthCallback(
+                    std::sync::Mutex::new(None),
+                ));
+                commands::register_deep_link_listener(&app.handle().clone());
+            }
 
             let db_path = app_dir.join("neko-finance.db");
 
             // WAL: leituras não bloqueiam a escrita e o banco sobrevive melhor a um crash no meio de
             // uma transação (writes ficam num log à parte até o checkpoint). `foreign_keys` explícito
             // para não depender do default da conexão. Pool de 1 conexão (escritor único) preservado.
+            // `snapshot::checkout::open_migrated_pool` é a MESMA lógica de abertura que a restauração
+            // do snapshot reusa ao reabrir o banco depois de uma troca de arquivo — fonte única.
             let pool_result = tauri::async_runtime::block_on(async {
-                let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path.display()))
-                    .map_err(|e| format!("URL do banco: {e}"))?
-                    .create_if_missing(true)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .foreign_keys(true);
+                let pool = snapshot::checkout::open_migrated_pool(&db_path).await?;
 
-                let pool = SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(opts)
-                    .await
-                    .map_err(|e| format!("abrir o banco: {e}"))?;
-
-                sqlx::migrate!("./migrations")
-                    .run(&pool)
-                    .await
-                    .map_err(|e| format!("migrações do banco: {e}"))?;
+                // Check-out ao abrir (ADR-0015): se o snapshot remoto avançou além da base local, ele
+                // é baixado, validado e troca o banco ativo ANTES de qualquer outra leitura/backfill
+                // rodar — os passos abaixo já operam sobre o estado convergido. Melhor esforço: nunca
+                // conectado, sem escopo, ou rede fora do ar apenas loga e segue com o banco de antes
+                // (offline pleno) — só um erro FATAL (arquivo trocado mas impossível reabrir) propaga.
+                let checkout =
+                    snapshot::checkout::checkout_on_open_best_effort(pool, &db_path, &app_dir)
+                        .await
+                        .map_err(|e| format!("check-out do snapshot: {e}"))?;
+                if let Err(e) = &checkout.outcome {
+                    eprintln!("[snapshot/checkout] {e}");
+                }
+                let pool = checkout.pool;
 
                 // Retenção do rastro técnico da conversa. Na abertura porque quem parou de
                 // conversar também para de purgar: sem esta passagem, um rastro venceria e ficaria.

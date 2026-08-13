@@ -1,10 +1,14 @@
 //! O cofre de segredos do sistema, atrás de um trait (ADR-0014, cláusula 2).
 //!
 //! `mia::key_store` e `oauth::token_store` guardam credenciais reais (a chave do provedor da Mia,
-//! o token do Google) e falam só com [`SecretVault`], nunca com `keyring::` ou o plugin Android
-//! diretamente. Este módulo é o adapter: [`KeyringVault`] cobre o keyring nativo do desktop,
-//! [`android::AndroidVault`] cobre o Android Keystore via `tauri-plugin-secure-vault` — e
-//! [`platform_vault`] escolhe por `cfg(target_os)`, sem o domínio mudar uma linha.
+//! o token do Google) e falam só com [`SecretVault`], nunca com `keyring::` diretamente. Este
+//! módulo é o adapter: a única implementação é [`KeyringVault`], uma casca fina sobre
+//! `keyring::Entry` — e essa mesma casca serve o Android também. A seleção por `cfg(target_os)`
+//! (ADR-0014) não troca a STRUCT, troca qual back-end o `keyring::Entry` fala por baixo:
+//! [`install_platform_backend`] registra, uma vez no início do processo, o `CredentialBuilder`
+//! Android (crate `android-keyring`, gerando a chave AES não exportável no `AndroidKeyStore` via
+//! JNI e cifrando o valor numa `SharedPreferences` privada) antes de qualquer `KeyringVault` ser
+//! usado — no desktop essa chamada é no-op, o keyring já nasce com o back-end nativo do SO.
 
 /// Gravar, ler e apagar um segredo por serviço + usuário — o mesmo vocabulário que `keyring::Entry`
 /// já usa, para a implementação desktop ser uma casca fina sobre o crate existente.
@@ -15,15 +19,10 @@ pub(crate) trait SecretVault {
 }
 
 /// O keyring nativo do sistema operacional (Keychain no macOS, Credential Manager no Windows,
-/// Secret Service no Linux) — uma casca fina sobre `keyring::Entry`, com o mesmo tratamento de
-/// "entrada ausente" que qualquer chamador do trait espera. `keyring` compila sob
-/// `target_os = "android"` (não há braço condicional por SO dentro do crate), mas não tem
-/// backend ali — daí o `cfg` aqui: no Android o tipo nunca é construído, e ficar fora do build
-/// evita o warning de código morto em vez de silenciá-lo.
-#[cfg(not(target_os = "android"))]
+/// Secret Service no Linux) — hoje a única implementação; uma casca fina sobre `keyring::Entry`,
+/// com o mesmo tratamento de "entrada ausente" que qualquer chamador do trait espera.
 pub(crate) struct KeyringVault;
 
-#[cfg(not(target_os = "android"))]
 impl SecretVault for KeyringVault {
     fn store(&self, service: &str, username: &str, secret: &str) -> Result<(), String> {
         let entry = keyring::Entry::new(service, username)
@@ -53,73 +52,36 @@ impl SecretVault for KeyringVault {
     }
 }
 
-/// O braço Android do cofre: uma casca fina sobre `tauri-plugin-secure-vault`, que por sua vez
-/// fala com o Android Keystore via `EncryptedSharedPreferences` (Kotlin, `android/`). O plugin
-/// mobile só existe depois que o app termina de inicializar — [`install_handle`] entrega o
-/// identificador do processo assim que o `setup()` do shell o alcança, e todo `store`/`load`/
-/// `delete` antes disso falha fechado, do mesmo jeito que um keyring de sistema indisponível.
-#[cfg(target_os = "android")]
-pub(crate) mod android {
-    use super::SecretVault;
-    use std::sync::OnceLock;
-    use tauri::{AppHandle, Manager, Wry};
-    use tauri_plugin_secure_vault::SecureVault;
-
-    // O `AppHandle`, não o `SecureVault<Wry>` em si: `PluginHandle` (por trás de `SecureVault`)
-    // não é `Clone`, e o handle do app É — cada chamada busca o estado gerenciado de novo a
-    // partir dele, o mesmo custo de uma leitura de `Mutex` sem guardar o guard.
-    static HANDLE: OnceLock<AppHandle<Wry>> = OnceLock::new();
-
-    /// Chamado uma vez, no `setup()` do shell, assim que o plugin termina de registrar a classe
-    /// Kotlin. Uma segunda chamada (não deveria acontecer — um só `App` por processo) é
-    /// silenciosamente ignorada em vez de sobrescrever o identificador já em uso por chamadas
-    /// concorrentes.
-    pub(crate) fn install_handle(app: AppHandle<Wry>) {
-        let _ = HANDLE.set(app);
-    }
-
-    fn plugin() -> Result<tauri::State<'static, SecureVault<Wry>>, String> {
-        let app = HANDLE
-            .get()
-            .ok_or_else(|| "cofre Android ainda não inicializado".to_string())?;
-        Ok(app.state::<SecureVault<Wry>>())
-    }
-
-    pub(crate) struct AndroidVault;
-
-    impl SecretVault for AndroidVault {
-        fn store(&self, service: &str, username: &str, secret: &str) -> Result<(), String> {
-            plugin()?
-                .store(service, username, secret)
-                .map_err(|error| format!("plugin do cofre Android: {error}"))
-        }
-
-        fn load(&self, service: &str, username: &str) -> Result<Option<String>, String> {
-            plugin()?
-                .load(service, username)
-                .map_err(|error| format!("plugin do cofre Android: {error}"))
-        }
-
-        fn delete(&self, service: &str, username: &str) -> Result<(), String> {
-            plugin()?
-                .delete(service, username)
-                .map_err(|error| format!("plugin do cofre Android: {error}"))
-        }
-    }
-}
-
-/// O cofre da plataforma corrente. Único ponto de seleção do processo inteiro.
-#[cfg(target_os = "android")]
-pub(crate) fn platform_vault() -> &'static dyn SecretVault {
-    static VAULT: android::AndroidVault = android::AndroidVault;
-    &VAULT
-}
-
-/// O cofre da plataforma corrente. Único ponto de seleção do processo inteiro.
-#[cfg(not(target_os = "android"))]
+/// O cofre da plataforma corrente. Sempre [`KeyringVault`] — a variação por plataforma vive no
+/// back-end que [`install_platform_backend`] registra no `keyring`, não numa struct alternativa.
 pub(crate) fn platform_vault() -> &'static dyn SecretVault {
     static VAULT: KeyringVault = KeyringVault;
     &VAULT
+}
+
+/// Registra o back-end Android do `keyring` (AndroidKeyStore + SharedPreferences via JNI puro,
+/// sem plugin Kotlin — a leitura do contexto JNI vem de `ndk-context`, já inicializado pelo
+/// runtime mobile do Tauri antes de `run()` executar). Chame UMA vez, o quanto antes em `run()`,
+/// antes de qualquer `platform_vault()` ser usado — `token_store`/`mia::key_store` podem carregar
+/// um segredo já na abertura do app (sync em segundo plano). No-op em qualquer outra plataforma:
+/// o keyring já nasce com o back-end nativo do SO (Keychain/Credential Manager/Secret Service).
+///
+/// Nota de risco: `android-keyring` se declara "Experimental" — é a única integração Android para
+/// o `keyring` crate hoje (`keyring` 3.x não tem braço Android próprio) e usa a API nativa do
+/// AndroidKeyStore por baixo (não é uma cifra própria do crate), mas ainda não tem o histórico de
+/// produção do resto da pilha. O contrato compila e roda no alvo real (`aarch64-linux-android`);
+/// gravar/ler/apagar um segredo de verdade só se prova com o app rodando no aparelho — um cofre
+/// não exercido assim é uma lacuna, não uma prova, mesmo com o binário compilando limpo.
+pub(crate) fn install_platform_backend() {
+    #[cfg(target_os = "android")]
+    {
+        if let Err(error) = android_keyring::set_android_keyring_credential_builder() {
+            eprintln!(
+                "[secret_vault] falha ao registrar o cofre do AndroidKeyStore ({error}); \
+                 segredos caem no fallback de arquivo cifrado (NEKO_INSECURE_FILE_FALLBACK)"
+            );
+        }
+    }
 }
 
 /// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO lido tanto por `mia::key_store` quanto por
@@ -198,10 +160,8 @@ pub(crate) mod double {
 /// implementação desktop e contra o dublê em memória — a mesma sequência, os dois lados.
 #[cfg(test)]
 mod contract {
-    #[cfg(not(target_os = "android"))]
-    use super::KeyringVault;
-    use super::SecretVault;
     use super::double::InMemoryVault;
+    use super::{KeyringVault, SecretVault};
 
     /// Grava, lê, apaga e relê um segredo descartável. Devolve `Err` assim que a PRIMEIRA operação
     /// falhar — o chamador decide se isso é uma violação de contrato (dublê) ou um ambiente sem
@@ -236,7 +196,6 @@ mod contract {
     }
 
     #[test]
-    #[cfg(not(target_os = "android"))]
     fn o_keyring_do_desktop_cumpre_o_contrato_do_cofre_quando_disponivel() {
         let vault = KeyringVault;
         // Serviço e usuário exclusivos deste teste — nunca os de produção (`neko-finance` /
