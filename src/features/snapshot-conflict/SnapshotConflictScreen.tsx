@@ -80,6 +80,23 @@ const GESTURE_LIST_HINT_STYLE: CSSProperties = {
   color: "var(--text-muted)",
 };
 
+/** Chave estável por conteúdo: o gesto não tem id próprio e dois gestos idênticos no mesmo
+ *  segundo são possíveis — o sufixo de ocorrência desambigua sem depender do índice de render. */
+function gestureKeys(gestures: DriveConflictGesture[]): string[] {
+  const seen = new Map<string, number>();
+  return gestures.map((gesture) => {
+    const base = [
+      gesture.at,
+      gesture.event_type,
+      gesture.entity_type,
+      gesture.source_sheet ?? "",
+    ].join("|");
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}|${n}`;
+  });
+}
+
 /** Uma das duas listas simétricas da tela: o que se perde num dos dois sentidos da escolha. Vazia
  *  é um estado honesto, não um erro — `EmptyState` é para carregamento/falha (regra 16 do
  *  ui-standards), não para "não há nada aqui de verdade". */
@@ -94,6 +111,7 @@ function GestureList({
   gestures: DriveConflictGesture[];
   emptyText: string;
 }) {
+  const keys = gestureKeys(gestures);
   return (
     <section aria-label={title} style={{ display: "grid", gap: "var(--space-2)" }}>
       <h3 style={GESTURE_LIST_HEADING_STYLE}>
@@ -106,7 +124,7 @@ function GestureList({
       ) : (
         <ul style={LIST_STYLE}>
           {gestures.map((gesture, i) => (
-            <li key={`${gesture.at}-${i}`} style={ITEM_STYLE}>
+            <li key={keys[i]} style={ITEM_STYLE}>
               {conflictGestureDatedLabel(gesture)}
             </li>
           ))}
