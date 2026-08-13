@@ -36,11 +36,6 @@ use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Antes de qualquer coisa: o back-end do cofre de segredos (ADR-0014) — `token_store`/
-    // `mia::key_store` podem carregar um segredo já no `.setup()` (sync em segundo plano), então
-    // isto precisa registrar antes de o builder ser montado. No-op fora do Android.
-    secret_vault::install_platform_backend();
-
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
