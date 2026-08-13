@@ -117,10 +117,11 @@ pub(crate) async fn get_active_sheet_names_for_spreadsheet(
     Ok(log_names.into_iter().map(|(s,)| s).collect())
 }
 
-/// Resolves the OAuth client id for the background token refresh. The frontend
-/// persists it in `app_setting` (it lives in the build env, not a Rust process
-/// env); we fall back to the `GOOGLE_CLIENT_ID` process env when present.
-async fn resolve_client_id(pool: &SqlitePool) -> Option<String> {
+/// Resolves the OAuth client id for a background/best-effort token refresh (this task's own probe,
+/// and `snapshot::checkout`'s check-out on open). The frontend persists it in `app_setting` (it
+/// lives in the build env, not a Rust process env); we fall back to the `GOOGLE_CLIENT_ID` process
+/// env when present.
+pub(crate) async fn resolve_client_id(pool: &SqlitePool) -> Option<String> {
     if let Ok(Some(id)) = crate::commands::app_setting_get(pool, "sheets_client_id").await
         && !id.trim().is_empty()
     {

@@ -49,11 +49,12 @@ export const DRIVE_CHECKIN_UP_TO_DATE_NOTE =
 export const CHECKIN_REFUSED_PREFIX = "Check-in recusado: ";
 
 /** Mensagem exata do veredito `Pull` (`snapshot_cmds::CHECKIN_REFUSED_PULL`) — fonte única para
- *  os testes, em vez de um literal hardcoded solto. O app não oferece check-out/pull/restore do
- *  snapshot remoto, então a copy nunca instrui um gesto que a tela não tem como cumprir. */
+ *  os testes, em vez de um literal hardcoded solto. O check-out roda sozinho na PRÓXIMA abertura
+ *  do app (`snapshot::checkout`, Rust) — a copy pede esse gesto em vez de prometer um botão de
+ *  "baixar agora" que esta tela não tem. */
 export const CHECKIN_REFUSED_PULL =
-  "Check-in recusado: outro aparelho publicou depois do seu último check-in, e a leitura " +
-  "dessa versão ainda não chegou a este app — chega numa atualização futura.";
+  "Check-in recusado: outro aparelho publicou depois do seu último check-in — feche e abra " +
+  "o app de novo para receber a versão dele antes de publicar.";
 
 /** Mensagem exata do veredito `Conflict` (`snapshot_cmds::CHECKIN_REFUSED_CONFLICT`). Nunca diz
  *  "baixe" — aqui significaria descartar trabalho local sem aviso. */
@@ -152,6 +153,60 @@ export function driveCheckinLabel(
   return recency
     ? `Último check-in ${recency}, por ${device}.`
     : `Publicado por ${device}.`;
+}
+
+/**
+ * Rótulo do último check-out (a leitura do snapshot remoto ao abrir o app): recência + de qual
+ * aparelho veio. Espelha `driveCheckinLabel` no mesmo padrão ("deste aparelho" / "de outro
+ * aparelho (nome)") comparando `last_checkout_device_id` a `this_device_id` — o backend nunca
+ * deveria registrar o check-out do PRÓPRIO snapshot (o veredito `Pull` do árbitro exige avanço de
+ * OUTRO aparelho), mas a tela não pode assumir essa invariante silenciosamente e cravar "outro
+ * aparelho" quando os dois ids batem.
+ */
+export function driveCheckoutLabel(
+  info: DriveCheckinInfo | null | undefined,
+  now?: number,
+): string {
+  if (!info?.last_checkout_at) {
+    return "Nenhuma leitura do Drive ainda.";
+  }
+  const recency = syncRecencyLabel(info.last_checkout_at, now);
+  const isThisDevice = info.last_checkout_device_id === info.this_device_id;
+  const device = isThisDevice
+    ? "deste aparelho"
+    : `de outro aparelho (${(info.last_checkout_device_id ?? "").slice(0, 8)})`;
+  return recency ? `Última leitura ${recency}, ${device}.` : `Recebido ${device}.`;
+}
+
+/** Rótulo fechado que `snapshot_state.last_checkout_outcome` grava — mesmos dois valores que o
+ *  backend (`checkout::outcome_warning_fields`) escreve. */
+type CheckoutOutcomeTag = "refused_newer_schema" | "error";
+
+/**
+ * Aviso calmo do desfecho do último check-out que merece a atenção do dono: a
+ * recusa por schema remoto mais novo orienta a atualizar o app; a falha de rede/integridade diz
+ * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura — nunca um
+ * botão de "tentar agora" que esta tela não tem. `null` quando não há nada a avisar (check-out em
+ * dia, restaurado com sucesso, ou nunca rodou).
+ */
+export function driveCheckoutOutcomeWarning(
+  info: DriveCheckinInfo | null | undefined,
+): string | null {
+  const outcome = info?.last_checkout_outcome as CheckoutOutcomeTag | null | undefined;
+  switch (outcome) {
+    case "refused_newer_schema":
+      return (
+        "O snapshot mais recente foi publicado por uma versão mais nova do Neko Finance — " +
+        "atualize o app para receber essa leitura."
+      );
+    case "error":
+      return (
+        "A última leitura do Drive não aconteceu — o app tenta de novo sozinho na próxima " +
+        "abertura."
+      );
+    default:
+      return null;
+  }
 }
 
 // --- Leitura -----------------------------------------------------------------------------

@@ -607,6 +607,10 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
       last_drive_checkin: {
         last_checkin_at: null,
         last_checkin_device_id: null,
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "aparelho-a",
       },
       drive_checkin: new Error(CHECKIN_REFUSED_PULL),
@@ -625,6 +629,10 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
       last_drive_checkin: {
         last_checkin_at: null,
         last_checkin_device_id: null,
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "aparelho-a",
       },
       drive_checkin: new Error(CHECKIN_REFUSED_CONFLICT),
@@ -643,11 +651,19 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
       last_drive_checkin: {
         last_checkin_at: "2026-08-11T10:00:00+00:00",
         last_checkin_device_id: "aparelho-a",
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "aparelho-a",
       },
       drive_checkin: {
         last_checkin_at: "2026-08-11T10:00:00+00:00",
         last_checkin_device_id: "aparelho-a",
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "aparelho-a",
         published: false,
       },
@@ -670,11 +686,96 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
       last_drive_checkin: {
         last_checkin_at: "2026-08-11T14:55:00+00:00",
         last_checkin_device_id: "aparelho-a",
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
         this_device_id: "aparelho-a",
       },
     });
     renderSettings();
 
     expect(await screen.findByText(/Último check-in/)).toBeInTheDocument();
+  });
+
+  it("mostra a linha de check-out (leitura ao abrir) quando o backend já registrou uma", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: "2026-08-12T08:00:00+00:00",
+        last_checkout_device_id: "device-bbbbbbbb-cccc",
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
+        this_device_id: "aparelho-a",
+      },
+    });
+    renderSettings();
+
+    expect(await screen.findByText("Última leitura do Drive")).toBeInTheDocument();
+    // `last_checkout_device_id`.slice(0, 8) — os 8 primeiros CARACTERES ("device-b"), o mesmo
+    // corte que `driveCheckinLabel` já usa para o lado do check-in.
+    expect(
+      await screen.findByText(/Última leitura .+, de outro aparelho \(device-b\)\./),
+    ).toBeInTheDocument();
+  });
+
+  it("check-out nunca feito ainda mostra a copy de estado vazio", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: null,
+        last_checkout_outcome_detail: null,
+        this_device_id: "aparelho-a",
+      },
+    });
+    renderSettings();
+
+    expect(
+      await screen.findByText("Nenhuma leitura do Drive ainda."),
+    ).toBeInTheDocument();
+  });
+
+  it("schema remoto mais novo: avisa e orienta a atualizar o app (spec 043 US11)", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: "2026-08-12T08:00:00+00:00",
+        last_checkout_device_id: "device-bbbbbbbb-cccc",
+        last_checkout_outcome: "refused_newer_schema",
+        last_checkout_outcome_detail: "3:4",
+        this_device_id: "aparelho-a",
+      },
+    });
+    renderSettings();
+
+    expect(
+      await screen.findByText(/versão mais nova do Neko Finance/i),
+    ).toBeInTheDocument();
+  });
+
+  it("falha de rede/integridade no check-out: avisa que a leitura não aconteceu", async () => {
+    mockCommands({
+      get_app_info: APP_INFO,
+      last_drive_checkin: {
+        last_checkin_at: null,
+        last_checkin_device_id: null,
+        last_checkout_at: null,
+        last_checkout_device_id: null,
+        last_checkout_outcome: "error",
+        last_checkout_outcome_detail: "timeout de rede",
+        this_device_id: "aparelho-a",
+      },
+    });
+    renderSettings();
+
+    expect(await screen.findByText(/não aconteceu/i)).toBeInTheDocument();
   });
 });
