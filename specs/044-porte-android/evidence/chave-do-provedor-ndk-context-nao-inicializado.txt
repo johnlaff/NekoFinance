@@ -1,0 +1,90 @@
+Critério 1 da #430 ("chave do provider cadastrável pela tela de Configurações e persistida
+no cofre do sistema") — verificado no aparelho de referência (SM-S926B) e NÃO alcançado. O
+achado é uma causa raiz nova, distinta da corrida de bootstrap que a #445 já tinha corrigido.
+
+## O sintoma
+
+Em Configurações › Conversa, colar uma chave placeholder e tocar "Registrar consentimento"
+devolve sucesso (o comando `set_mia_api_key` resolve, sem rejeitar) e o consentimento é
+concedido — mas `has_key` volta `false` na mesma resposta, e nenhuma chave sobrevive. Invocado
+direto pelo DevTools do WebView (bypassando a UI, contra o processo real no aparelho):
+
+    invoke('set_mia_api_key', {key: 'sk-or-v1-000...'})
+    → Ok({ granted: true, has_key: false, linked: false, ... })
+
+`run-as app.neko.finance.debug ls /data/data/app.neko.finance.debug/shared_prefs/` nunca lista
+um arquivo com o nome de serviço real (`neko-finance-mia`) — nem antes, nem depois da chamada.
+`key_store::store()` usa `?` e devolveria `Err` se o cofre tivesse recusado a escrita; como o
+comando volta `Ok`, a escrita "sucede" contra um back-end que não persiste nada.
+
+## A causa raiz
+
+`secret_vault::install_platform_backend()` só registra o `CredentialBuilder` do
+`android-keyring` depois de sondar `ndk_context::android_context()` (via `catch_unwind`) até
+2000ms. Essa sondagem NUNCA teve sucesso nesta sessão — nem nos primeiros 2s de cada processo,
+nem chamada repetidamente por mais de 4 minutos com o app aberto e responsivo (log abaixo).
+
+    08-13 08:26:54 [secret_vault] contexto Android (ndk-context) não ficou pronto em 2000ms;
+    tentando de novo na próxima chamada ao cofre
+    08-13 08:27:52 [idem, processo relançado via `am start`, não `monkey` — mesmo resultado]
+    08-13 08:28:15 [idem, minutos depois, app totalmente interativo]
+
+Não é uma corrida de inicialização: é que NADA nesta árvore de dependências chama
+`ndk_context::initialize_android_context()`. Conferido em três lugares:
+
+  1. `src-tauri/Cargo.lock` — só duas entradas dependem de `ndk-context`: `android-keyring` (que
+     EXIGE o contexto) e o próprio `neko-finance` (a sondagem). Nem `tao`, nem `wry`, nem
+     `tauri` aparecem como dependentes.
+  2. `tao-0.35.3/src/platform_impl/android/mod.rs` usa `ndk_glue` (`ndk_glue::native_activity()`,
+     `ndk_glue::take_intent_urls()`) para o ciclo de vida Android — uma família de crate mais
+     antiga que NUNCA popula o global do `ndk-context`. Um comentário morto no próprio arquivo
+     ("TODO: use ndk-context instead") confirma que a migração não aconteceu.
+  3. `grep -rn "ndk_context" src-tauri/gen/android/` (fora de `build/`) não bate em nada — o
+     projeto Android gerado (Kotlin/JNI) também não inicializa o contexto.
+
+`android-keyring 0.2.0` só oferece `AndroidBuilder::from_ndk_context()` — não há um construtor
+alternativo que aceite o `JavaVM`/`Context` por outro caminho. Sem alguém popular o global (só
+`ndk_context::initialize_android_context(vm, context)` faz isso), a sondagem devolve falso para
+sempre, e o `android_keyring::set_android_keyring_credential_builder()` nunca chega a ser
+chamado — o `keyring` genérico segue com o que quer que sirva de back-end default numa
+plataforma sem builder custom registrado, que aceita `store()` sem erro mas não persiste nada
+observável em `shared_prefs`.
+
+## O que a #445 tinha assumido (e por que não se sustenta)
+
+A #445 documentou a sondagem como corrida ("a activity nativa começa a rodar `run()` numa thread
+própria ANTES de o laço de eventos do `tao` terminar de registrar o contexto JNI") e validou só
+que o app não crasha mais — nunca chegou a exercitar o cadastro real da chave (tela bloqueada
+naquela sessão). A suposição de que o contexto "fica pronto logo depois" pressupõe que ALGUÉM o
+registra eventualmente; esta sessão prova que ninguém registra, em nenhum momento do processo.
+
+## O conserto desta sessão (pequeno, com teste, MANTIDO)
+
+`install_platform_backend()` usava `std::sync::Once`, que trava a decisão para sempre mesmo
+quando a tentativa fracassa — uma falha transitória de verdade (a que a #445 imaginou) ficaria
+presa permanentemente no back-end errado mesmo depois do contexto ficar pronto. Trocado por
+`RetryUntilSuccess` (só grava "instalado" quando a tentativa devolve `true`), testado em
+`src-tauri/src/secret_vault.rs::retry_until_success_tests` — dois testes, plataforma-neutros
+(não dependem do JNI real), provando que uma falha é retomada na próxima chamada e um sucesso
+trava a decisão. `cargo test --manifest-path src-tauri/Cargo.toml`: 1391 passed, 0 failed. Esse
+conserto é correto e fica — mas sozinho não resolve o sintoma, porque a sondagem em si nunca
+teve como suceder nesta árvore de dependências.
+
+## O que falta (fora do escopo desta sessão)
+
+Popular `ndk_context::initialize_android_context()` de verdade exige código nativo/Kotlin no
+bootstrap da activity (JNI_OnLoad ou um método nativo chamado do `onCreate`, com o `JavaVM` e o
+`Context`/`Activity` como `jobject`) — mudança de arquitetura na camada de plataforma Android,
+não um ajuste pontual em Rust puro. Alternativa: trocar o back-end do cofre Android para um que
+não dependa do `ndk-context` global (se existir um caminho de inicialização direta em alguma
+outra crate ou versão). Qualquer uma das duas rotas é decisão de arquitetura — cabe a uma sessão
+própria, com grelha antes de codar.
+
+## Como reproduzir
+
+1. `adb shell pm clear app.neko.finance.debug && am start -n app.neko.finance.debug/app.neko.finance.MainActivity`
+2. Configurações › Conversa › Autorizar › colar qualquer chave › Registrar consentimento.
+3. `adb logcat -d -b all | grep secret_vault` — a linha "não ficou pronto" aparece de novo,
+   mesmo minutos depois de o app estar interativo.
+4. `adb shell run-as app.neko.finance.debug ls shared_prefs/` nunca lista um arquivo com o nome
+   de serviço `neko-finance-mia`.
