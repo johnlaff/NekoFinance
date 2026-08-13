@@ -5,6 +5,7 @@
 //! `appDataFolder` do Drive atrás da borda HTTP existente (`crate::http`).
 
 pub mod checkout;
+pub(crate) mod conflict;
 pub mod lease;
 pub mod manifest;
 pub mod restore;

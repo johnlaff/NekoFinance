@@ -19,6 +19,10 @@ import {
   setMiaApiKeyCmd,
   type MiaConsentView,
 } from "./configView";
+import {
+  closeSnapshotConflict,
+  snapshotConflictOpenSnapshot,
+} from "../features/snapshot-conflict/snapshotConflictStore";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -121,6 +125,7 @@ describe("SettingsScreen", () => {
     mockWriteFile.mockReset().mockResolvedValue(undefined);
     mockAppCacheDir.mockReset().mockResolvedValue("/cache");
     mockJoin.mockReset().mockResolvedValue("/cache/neko-local-import.xlsx");
+    closeSnapshotConflict();
   });
 
   it("mostra a conversa desligada e revela os processadores e opt-ins ao ligar", async () => {
@@ -622,7 +627,7 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
     expect(await screen.findByText(CHECKIN_REFUSED_PULL)).toBeInTheDocument();
   });
 
-  it("Conflict: mostra a recusa VERBATIM, sem sugerir descartar trabalho local", async () => {
+  it("Conflict: abre a tela de conflito em vez de um erro de linha (ADR-0015)", async () => {
     const user = userEvent.setup();
     mockCommands({
       get_app_info: APP_INFO,
@@ -639,9 +644,13 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
     });
     renderSettings();
 
+    expect(snapshotConflictOpenSnapshot()).toBe(false);
     await user.click(await screen.findByRole("button", { name: "Fazer check-in" }));
 
-    expect(await screen.findByText(CHECKIN_REFUSED_CONFLICT)).toBeInTheDocument();
+    // A divergência dupla nunca vira erro de linha (sugeriria descartar trabalho local em
+    // silêncio) — abre a tela de conflito com a lista de gestos, montada em `App.tsx`.
+    await waitFor(() => expect(snapshotConflictOpenSnapshot()).toBe(true));
+    expect(screen.queryByText(CHECKIN_REFUSED_CONFLICT)).not.toBeInTheDocument();
   });
 
   it("'em dia' é sucesso: copy calma, anunciada por role=status, nunca role=alert", async () => {

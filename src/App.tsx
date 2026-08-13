@@ -20,6 +20,11 @@ import { CopilotScreen } from "./screens/CopilotScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { OnboardingFlow } from "./features/onboarding/OnboardingFlow";
 import { ONBOARDING_KEY } from "./features/onboarding/onboardingView";
+import { SnapshotConflictScreen } from "./features/snapshot-conflict/SnapshotConflictScreen";
+import {
+  snapshotConflictOpenSnapshot,
+  subscribeSnapshotConflict,
+} from "./features/snapshot-conflict/snapshotConflictStore";
 import { UpdateInvitation } from "./features/updater/UpdateInvitation";
 import { fetchAppSetting, fetchAuthStatus, type AuthStatus } from "./shell/shellView";
 import { isTauri } from "./lib/env";
@@ -78,6 +83,10 @@ function App() {
 
   // Crumbs por tela sobrepostos pelas próprias telas (ex.: o mês visto no Livro-razão).
   const crumbOverrides = useSyncExternalStore(subscribeCrumbs, crumbOverridesSnapshot);
+  const snapshotConflictOpen = useSyncExternalStore(
+    subscribeSnapshotConflict,
+    snapshotConflictOpenSnapshot,
+  );
 
   const nekoApp = {
     navigate: (s: Screen) => setScreen(s),
@@ -93,7 +102,10 @@ function App() {
           onGoToSettings={() => setScreen("config")}
         />
       )}
-      <div style={{ display: "contents" }} inert={showOnboarding === true}>
+      <div
+        style={{ display: "contents" }}
+        inert={showOnboarding === true || snapshotConflictOpen}
+      >
         <AppShell
           active={screen}
           onNavigate={setScreen}
@@ -135,6 +147,7 @@ function App() {
         />
         <UpdateInvitation />
       </div>
+      {snapshotConflictOpen && <SnapshotConflictScreen />}
     </NekoAppProvider>
   );
 }

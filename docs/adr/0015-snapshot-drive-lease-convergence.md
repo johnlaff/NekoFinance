@@ -25,7 +25,12 @@ existente); um manifest de sequência monotônica por aparelho decide quem pode 
   apagou. Instalação nova sem base local nem manifest remoto (`0, 0, None`) não cai aqui — é
   `UpToDate`, o único jeito de nada ter para subir nem puxar.
 - **Conflito nunca funde**: quando os dois aparelhos avançaram a partir da mesma base, o dono
-  escolhe o vencedor manualmente, vendo a lista de gestos do lado perdedor (lida do `sync_log`).
+  escolhe o vencedor manualmente, vendo a lista de gestos de CADA lado (lida do `sync_log` de cada
+  aparelho) — a escolha é simétrica, então o que se perderia nos dois sentidos fica visível antes
+  de escolher, nunca só o lado que a tela presume perdedor. O `sync_log` hoje só registra
+  import/write-back da planilha; a lista reflete exatamente o que está gravado ali, sem
+  instrumentar gestos de domínio (splits, tags, teto, faturas) — expandir essa cobertura é decisão
+  própria, fora do escopo deste mecanismo.
 - O transporte fica atrás do `appDataFolder` do Drive — invisível ao dono, escopo OAuth estreito
   (`drive.appdata`, não acesso aos arquivos do Google Drive do usuário).
 - **Convergência é total, não por assunto**: o snapshot é o banco inteiro, então nada nele

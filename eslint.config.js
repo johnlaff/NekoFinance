@@ -80,6 +80,8 @@ export default tseslint.config(
       "src/features/pockets/pocketsView.test.ts",
       "src/features/reconcile/reconcileView.ts",
       "src/features/reconcile/reconcileView.test.ts",
+      "src/features/snapshot-conflict/snapshotConflictView.ts",
+      "src/features/snapshot-conflict/snapshotConflictView.test.ts",
       "src/features/onboarding/onboardingView.ts",
       "src/features/onboarding/onboardingView.test.ts",
       "src/features/updater/updaterView.ts",
@@ -107,7 +109,7 @@ export default tseslint.config(
                 "Não importe lib/api diretamente — leia pela *View.ts da tela ou do shell " +
                 "(ela é a porta do shim). Exceções: src/screens/*View.ts e src/shell/*View.ts " +
                 "(+ seus testes), as views de domínio de feature (sheets/pockets/reconcile/" +
-                "onboarding/updater + testes), runtime da Mia " +
+                "snapshot-conflict/onboarding/updater + testes), runtime da Mia " +
                 "(miaRuntime/miaSession + testes), src/hooks/**, e src/test/commands.ts " +
                 "(infra de mock do IPC).",
             },

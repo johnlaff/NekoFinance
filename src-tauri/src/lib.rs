@@ -125,6 +125,8 @@ pub fn run() {
             commands::last_sync_at,
             commands::drive_checkin,
             commands::last_drive_checkin,
+            commands::drive_conflict_details,
+            commands::resolve_drive_conflict,
             tags::create_tag_cmd,
             tags::list_tags_cmd,
             tags::set_transaction_tags_cmd,
