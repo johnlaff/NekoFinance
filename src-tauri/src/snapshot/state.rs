@@ -171,6 +171,14 @@ pub async fn record_conflict_pending(pool: &SqlitePool, since: Option<&str>) -> 
 /// publicou perde o próprio histórico a cada check-out e a UI volta a dizer "nenhum check-in
 /// ainda" para quem já fez um.
 ///
+/// `restored_export_sha256` é o hash do conteúdo RECÉM-restaurado (os bytes baixados, já sem
+/// `snapshot_state` — a mesma forma que um export produziria) e grava-se em `last_export_sha256`
+/// nos DOIS ramos (ao contrário de `last_checkin_at`/`last_checkin_device_id`, que só valem para
+/// semear uma linha nova): o conteúdo ativo acabou de virar o do remoto, então o PRÓXIMO check-in
+/// precisa comparar contra ELE, nunca contra o hash de uma publicação anterior deste aparelho.
+/// Sem isto, `drive_checkin_core` sempre lia "mudou" logo depois de toda restauração (o hash local
+/// ficava `NULL`) e republicava um conteúdo idêntico ao que acabou de baixar.
+///
 /// `ON CONFLICT` (em vez de `INSERT` cru) porque o arquivo baixado, embora normalmente stripped,
 /// não é sob controle deste aparelho — um upsert idempotente é mais seguro que assumir a tabela
 /// vazia. Quando a linha JÁ existe (a troca não encontrou uma tabela vazia), o `SET` não toca
@@ -180,6 +188,7 @@ pub async fn record_conflict_pending(pool: &SqlitePool, since: Option<&str>) -> 
 /// `pending_local_changes`/`conflict_pending_since` SEMPRE voltam ao estado limpo (0/`NULL`) nos
 /// dois ramos: o conteúdo ativo acabou de ser TROCADO pelo do remoto, então qualquer diff ou
 /// disputa registrada antes da troca se refere a um conteúdo que não existe mais.
+#[allow(clippy::too_many_arguments)]
 pub async fn adopt_after_restore(
     pool: &SqlitePool,
     device_id: &str,
@@ -188,16 +197,18 @@ pub async fn adopt_after_restore(
     remote_device_id: &str,
     last_checkin_at: Option<&str>,
     last_checkin_device_id: Option<&str>,
+    restored_export_sha256: &str,
 ) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO snapshot_state \
             (id, device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
-             last_checkout_at, last_checkout_device_id, pending_local_changes, \
+             last_export_sha256, last_checkout_at, last_checkout_device_id, pending_local_changes, \
              conflict_pending_since) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, 0, NULL) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, NULL) \
          ON CONFLICT (id) DO UPDATE SET \
             device_id = excluded.device_id, \
             base_sequence = excluded.base_sequence, \
+            last_export_sha256 = excluded.last_export_sha256, \
             last_checkout_at = excluded.last_checkout_at, \
             last_checkout_device_id = excluded.last_checkout_device_id, \
             pending_local_changes = 0, \
@@ -207,6 +218,7 @@ pub async fn adopt_after_restore(
     .bind(base_sequence)
     .bind(last_checkin_at)
     .bind(last_checkin_device_id)
+    .bind(restored_export_sha256)
     .bind(checked_out_at)
     .bind(remote_device_id)
     .execute(pool)
@@ -385,6 +397,7 @@ mod tests {
             "outro-aparelho",
             Some("captured-mas-deve-ser-ignorado"),
             Some("captured-device-mas-deve-ser-ignorado"),
+            "hash-do-conteudo-recem-restaurado",
         )
         .await
         .expect("adopt_after_restore");
@@ -413,7 +426,13 @@ mod tests {
             after.last_checkin_device_id.as_deref(),
             Some(initial.device_id.as_str())
         );
-        assert_eq!(after.last_export_sha256.as_deref(), Some("seed-hash"));
+        // Ao contrário do check-in, o hash do export MUDA mesmo neste ramo: o conteúdo ativo
+        // acabou de virar o do remoto, então "seed-hash" (de uma publicação de ANTES da troca) não
+        // descreve mais o que está no disco.
+        assert_eq!(
+            after.last_export_sha256.as_deref(),
+            Some("hash-do-conteudo-recem-restaurado")
+        );
     }
 
     #[tokio::test]
@@ -455,6 +474,7 @@ mod tests {
             "device-que-publicou",
             captured.last_checkin_at.as_deref(),
             captured.last_checkin_device_id.as_deref(),
+            "hash-do-conteudo-baixado",
         )
         .await
         .expect("adopt_after_restore");
@@ -472,6 +492,13 @@ mod tests {
         assert_eq!(
             after.last_checkout_device_id.as_deref(),
             Some("device-que-publicou")
+        );
+        // O próximo check-in precisa comparar contra o hash do conteúdo QUE ACABOU DE CHEGAR, não
+        // contra "hash-antes-da-troca" (a publicação deste aparelho de ANTES da restauração) — senão
+        // republicaria à toa um conteúdo idêntico ao que acabou de baixar.
+        assert_eq!(
+            after.last_export_sha256.as_deref(),
+            Some("hash-do-conteudo-baixado")
         );
         // O histórico de check-in DESTE aparelho, capturado antes da troca, sobrevive — a tela
         // não pode voltar a dizer "nenhum check-in ainda" para um aparelho que já publicou.
@@ -506,6 +533,7 @@ mod tests {
             "device-que-publicou",
             None,
             None,
+            "hash-do-conteudo-baixado",
         )
         .await
         .expect("adopt_after_restore");
@@ -526,6 +554,10 @@ mod tests {
         );
         // Sem check-in prévio capturado (aparelho novo, nunca publicou): não há o que preservar.
         assert!(after.last_checkin_at.is_none());
+        assert_eq!(
+            after.last_export_sha256.as_deref(),
+            Some("hash-do-conteudo-baixado")
+        );
     }
 
     #[tokio::test]
@@ -541,6 +573,7 @@ mod tests {
             "device-que-publicou",
             None,
             None,
+            "hash-primeira-adocao",
         )
         .await
         .expect("primeira adoção");
@@ -552,6 +585,7 @@ mod tests {
             "device-que-publicou-de-novo",
             None,
             None,
+            "hash-segunda-adocao",
         )
         .await
         .expect("segunda adoção não deve falhar por PK duplicada");
@@ -561,6 +595,11 @@ mod tests {
         assert_eq!(
             after.last_checkout_device_id.as_deref(),
             Some("device-que-publicou-de-novo")
+        );
+        assert_eq!(
+            after.last_export_sha256.as_deref(),
+            Some("hash-segunda-adocao"),
+            "cada adoção sobrescreve o hash com o do conteúdo QUE ELA restaurou"
         );
     }
 
@@ -692,6 +731,7 @@ mod tests {
             "device-b",
             None,
             None,
+            "hash-insert",
         )
         .await
         .expect("adopt_after_restore (INSERT)");
@@ -718,6 +758,7 @@ mod tests {
             "device-b",
             None,
             None,
+            "hash-update",
         )
         .await
         .expect("adopt_after_restore (UPDATE)");

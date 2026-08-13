@@ -5,8 +5,10 @@
 //! de verdade, resolvendo token/escopo e silenciando qualquer motivo de NÃO tentar.
 
 use super::{lease, restore, state, transport::DriveSnapshotClient};
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// O que `checkout_on_open` fez, quando termina sem erro.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,44 +74,167 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> Result<SqlitePool, Str
     Ok(pool)
 }
 
+/// Desfecho de [`reopen_after_swap_or_rollback`] quando reabrir NÃO propaga um erro fatal.
+#[derive(Debug)]
+enum ReopenOutcome {
+    /// Caso comum: o conteúdo recém-trocado reabriu de primeira.
+    Reopened(SqlitePool),
+    /// Reabrir o conteúdo recém-trocado falhou, mas havia uma salvaguarda do banco de ANTES da
+    /// troca — revertida e reaberta com sucesso. `message` é o aviso não-fatal que
+    /// `checkout_on_open` devolve como `outcome: Err` (a UI de Conexão mostra; a próxima abertura
+    /// tenta o snapshot remoto de novo).
+    RolledBack { pool: SqlitePool, message: String },
+}
+
+/// Reabre o pool no `db_path` recém-trocado por `swap_active_db_atomically` — e, se isso falhar,
+/// reverte automaticamente para a salvaguarda em vez de deixar o app sem banco nenhum. Reabrir
+/// com sucesso é o caso comum; falhar é raro
+/// (I/O transitório, disco cheio na migração), mas tratar como fatal joga fora um app que abriria
+/// perfeitamente bem com o conteúdo de ANTES da troca, intacto na salvaguarda (nunca movida, só
+/// copiada por `swap_active_db_atomically`).
+///
+/// `Err` só quando NENHUM pool utilizável sobra: sem `safeguard_path` (primeira restauração —
+/// nada para reverter) ou quando a própria reversão também falha. Esse é o único caso em que
+/// `checkout_on_open` ainda propaga um erro fatal de verdade.
+async fn reopen_after_swap_or_rollback(
+    db_path: &Path,
+    safeguard_path: Option<&Path>,
+) -> Result<ReopenOutcome, String> {
+    let reopen_err = match open_migrated_pool(db_path).await {
+        Ok(pool) => return Ok(ReopenOutcome::Reopened(pool)),
+        Err(e) => e,
+    };
+
+    // A mensagem cita o caminho da salvaguarda: o conteúdo de ANTES da troca está intacto lá
+    // (cópia, nunca movida), disponível para restauração manual mesmo se a reversão automática
+    // abaixo também falhar.
+    let recovery = safeguard_path
+        .map(|p| format!("o conteúdo anterior está preservado em {}", p.display()))
+        .unwrap_or_else(|| "não havia banco anterior a preservar (primeira restauração)".into());
+    let fatal_msg = format!("reabrir banco depois da restauração: {reopen_err}; {recovery}");
+
+    let Some(safeguard) = safeguard_path else {
+        return Err(fatal_msg);
+    };
+    if let Err(rollback_err) = restore::rollback_to_safeguard(safeguard, db_path) {
+        return Err(format!(
+            "{fatal_msg}; reversão automática também falhou: {rollback_err}"
+        ));
+    }
+    match open_migrated_pool(db_path).await {
+        Ok(pool) => Ok(ReopenOutcome::RolledBack {
+            pool,
+            message: format!(
+                "{fatal_msg}; revertido automaticamente para o banco anterior — o snapshot \
+                 remoto será tentado de novo na próxima abertura"
+            ),
+        }),
+        Err(reopen_after_rollback_err) => Err(format!(
+            "{fatal_msg}; reversão automática também falhou ao reabrir: {reopen_after_rollback_err}"
+        )),
+    }
+}
+
 /// Resolve client id → token com escopo `drive.appdata` → cliente pronto, em modo melhor esforço
-/// (ADR-0015): qualquer motivo de NÃO tentar (sem client id configurado, token sem escopo/refresh
-/// falhou) devolve `None` em silêncio — "sync ainda não configurado", nunca uma falha. Compartilhado
-/// pelos três pontos de entrada que tentam o Drive sem um clique explícito do dono: o check-out no
-/// boot, a sonda de foco, e o check-in automático (`checkin_task::run_checkin_attempt_core`).
+/// (ADR-0015): SÓ os motivos de NÃO TENTAR — sem client id configurado, ou nenhum token guardado
+/// (nunca conectou) — devolvem `Ok(None)` em silêncio, "sync ainda não configurado". A partir daí
+/// a decisão de tentar já foi tomada; um erro genuíno DEPOIS disso (rede durante o refresh do
+/// token, HTTP do provedor recusando o refresh) é uma tentativa que FALHOU e precisa ficar
+/// visível como `Err`, nunca desaparecer como se nada tivesse acontecido — a mesma distinção que
+/// o doc de `checkout_on_open_best_effort` já promete ("só a decisão de TENTAR é best-effort, não
+/// o resultado da tentativa"). O escopo `drive.appdata` ainda não concedido (`NEEDS_DRIVE_REAUTH`,
+/// uma conexão de antes deste recurso existir) fica na MESMA classe de "não configurado" das duas
+/// primeiras — é "ainda não migrou para o re-consentimento", não uma falha de tentativa.
+///
+/// Compartilhado pelos três pontos de entrada que tentam o Drive sem um clique explícito do dono:
+/// o check-out no boot, a sonda de foco, e o check-in automático
+/// (`checkin_task::run_checkin_attempt_core`).
 pub(crate) async fn resolve_drive_client_best_effort(
     pool: &SqlitePool,
     app_dir: &Path,
-) -> Option<DriveSnapshotClient> {
-    let client_id = crate::sync_task::resolve_client_id(pool).await?;
+) -> Result<Option<DriveSnapshotClient>, String> {
+    let Some(client_id) = crate::sync_task::resolve_client_id(pool).await else {
+        return Ok(None);
+    };
+    // Checado ANTES de `ensure_drive_scope`, sync (é uma leitura local — keychain/arquivo, nunca
+    // rede): só assim dá para distinguir "nunca conectou" (silencioso) de uma falha real DEPOIS de
+    // decidir tentar (o refresh abaixo, que pode tocar rede).
+    match crate::oauth::token_store::load_token(app_dir) {
+        Ok(None) => return Ok(None),
+        Ok(Some(_)) => {}
+        Err(e) => return Err(e),
+    }
     let client_secret = crate::oauth::pkce::resolve_client_secret(None);
-    let token = crate::oauth::token_store::ensure_drive_scope(
+    let token = match crate::oauth::token_store::ensure_drive_scope(
         app_dir,
         &client_id,
         client_secret.as_deref(),
     )
     .await
-    .ok()?;
-    Some(DriveSnapshotClient::new(
+    {
+        Ok(t) => t,
+        Err(e) if e == crate::oauth::token_store::NEEDS_DRIVE_REAUTH => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    Ok(Some(DriveSnapshotClient::new(
         token,
         super::transport::production_base_url(),
-    ))
+    )))
 }
 
-/// Núcleo testável: `pool` já migrado no arquivo `db_path`, `drive` já autenticado. Devolve
-/// `Err` SÓ quando não sobra pool utilizável nenhum — a troca de arquivo teve sucesso, mas
-/// reabrir uma conexão nela falhou. Este é o mesmo tipo de falha fatal que a abertura inicial do
-/// banco já trata em `lib.rs` (diálogo nativo + abort); fora desse caso extremo, o retorno é
-/// sempre `Ok(CheckoutResult)` com um pool pronto para uso.
-pub async fn checkout_on_open(
+/// Tudo capturado ANTES do ponto de não-retorno (fechar o pool antigo) e pronto para o commit da
+/// troca de arquivo — devolvido por [`prepare_restore`] quando o veredito é restaurar de verdade.
+struct ReadyToCommit {
+    pool: SqlitePool,
+    tmp_path: PathBuf,
+    device_id: String,
+    last_checkin_at: Option<String>,
+    last_checkin_device_id: Option<String>,
+    remote_sequence: i64,
+    remote_device_id: String,
+    restored_export_sha256: String,
+}
+
+/// Trabalho que só pode rodar DEPOIS que [`prepare_restore`] devolve `ReadyToFinish` — sempre até
+/// o fim, nunca sob o teto de espera do boot (ver o doc de [`RestorePreparation`]). As duas
+/// variantes são as únicas escritas no `pool` que um check-out pode produzir: `Commit` troca o
+/// arquivo inteiro; `AdoptOwnSequence` só avança `base_sequence` (ver o comentário no ramo
+/// correspondente de `prepare_restore`).
+enum UntimedWork {
+    Commit(ReadyToCommit),
+    AdoptOwnSequence { pool: SqlitePool, sequence: i64 },
+}
+
+/// Desfecho de [`prepare_restore`]: ou o check-out já termina aqui mesmo (`Done` — nada a
+/// restaurar, schema recusado, erro de rede), ou fica pronto para terminar (`ReadyToFinish`). A
+/// costura entre os dois é o mesmo "ponto de não-retorno" documentado dentro de
+/// `prepare_restore`: tudo ANTES dele só LÊ rede/disco e pode ser abandonado a qualquer momento
+/// sem deixar rastro no `pool` recebido — é por isso que só essa parte entra sob o teto de espera
+/// do boot (`checkout_on_open_with_deadline`). O trabalho de `ReadyToFinish` (fechar o pool
+/// antigo e trocar o arquivo, OU só avançar a sequência local) NUNCA pode ser interrompido: uma
+/// vez que uma dessas escritas começa, não existe "desistir" no meio — um teto que também
+/// cobrisse esta fase deixaria o pool clonado ANTES do teto (a `pool_fallback` do chamador)
+/// potencialmente inconsistente com o que a escrita abandonada já tinha feito, e no caso do
+/// commit especificamente, `SqlitePool::close()` marca o `Arc` inteiro compartilhado entre os
+/// clones (não só o handle que chamou) — o clone "de segurança" nunca seria seguro se o teto
+/// pudesse abortar depois desse ponto.
+enum RestorePreparation {
+    Done(CheckoutResult),
+    ReadyToFinish(UntimedWork),
+}
+
+/// Fase 1 (abortável): consulta o manifest remoto e, se o veredito for `Pull`, baixa e valida o
+/// snapshot — tudo isto só LÊ rede/disco, `pool` nunca é tocado. A única fase que o teto de
+/// espera do boot (`checkout_on_open_with_deadline`) pode abandonar a meio caminho.
+async fn prepare_restore(
     pool: SqlitePool,
     db_path: &Path,
     drive: &DriveSnapshotClient,
-) -> Result<CheckoutResult, String> {
+) -> RestorePreparation {
     let local_state = match state::load_or_init(&pool).await {
         Ok(s) => s,
         Err(e) => {
-            return Ok(CheckoutResult {
+            return RestorePreparation::Done(CheckoutResult {
                 pool,
                 outcome: Err(e),
             });
@@ -124,7 +249,7 @@ pub async fn checkout_on_open(
     // nunca ter escolhido — a mesma sobrescrita silenciosa que o lease existe para impedir. A tela
     // de conflito é quem resolve isto, nunca o boot.
     if local_state.conflict_pending_since.is_some() {
-        return Ok(CheckoutResult {
+        return RestorePreparation::Done(CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
         });
@@ -133,7 +258,7 @@ pub async fn checkout_on_open(
     let remote = match drive.fetch_manifest().await {
         Ok(m) => m,
         Err(e) => {
-            return Ok(CheckoutResult {
+            return RestorePreparation::Done(CheckoutResult {
                 pool,
                 outcome: Err(e),
             });
@@ -151,7 +276,7 @@ pub async fn checkout_on_open(
         remote.as_ref(),
     );
     if verdict != lease::LeaseVerdict::Pull {
-        return Ok(CheckoutResult {
+        return RestorePreparation::Done(CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
         });
@@ -178,31 +303,25 @@ pub async fn checkout_on_open(
     if remote_manifest.device_id == local_state.device_id
         && remote_manifest.sequence == local_state.base_sequence + 1
     {
-        return match state::adopt_own_sequence(&pool, remote_manifest.sequence).await {
-            Ok(()) => Ok(CheckoutResult {
-                pool,
-                outcome: Ok(CheckoutOutcome::CaughtUpOwnSequence {
-                    sequence: remote_manifest.sequence,
-                }),
-            }),
-            Err(e) => Ok(CheckoutResult {
-                pool,
-                outcome: Err(e),
-            }),
-        };
+        // A escrita em si (`state::adopt_own_sequence`) fica para depois do teto de espera do
+        // boot — ver o doc de `RestorePreparation`: nada em `prepare_restore` pode tocar `pool`.
+        return RestorePreparation::ReadyToFinish(UntimedWork::AdoptOwnSequence {
+            pool,
+            sequence: remote_manifest.sequence,
+        });
     }
 
     let local_schema = match local_schema_version(&pool).await {
         Ok(v) => v,
         Err(e) => {
-            return Ok(CheckoutResult {
+            return RestorePreparation::Done(CheckoutResult {
                 pool,
                 outcome: Err(e),
             });
         }
     };
     if remote_manifest.schema_version > local_schema {
-        return Ok(CheckoutResult {
+        return RestorePreparation::Done(CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::RefusedNewerSchema {
                 local_schema,
@@ -221,39 +340,95 @@ pub async fn checkout_on_open(
         Ok(Some(bytes)) => bytes,
         // Veredito Pull mas o binário sumiu (só o manifest sobrou) — nada para restaurar.
         Ok(None) => {
-            return Ok(CheckoutResult {
+            return RestorePreparation::Done(CheckoutResult {
                 pool,
                 outcome: Ok(CheckoutOutcome::NothingToDo),
             });
         }
         Err(e) => {
-            return Ok(CheckoutResult {
+            return RestorePreparation::Done(CheckoutResult {
                 pool,
                 outcome: Err(e),
             });
         }
     };
 
+    // Hash do conteúdo QUE ACABOU DE CHEGAR, na mesma forma que `export_candidate_snapshot`
+    // produziria (já sem `snapshot_state` — quem publicou já rodou `strip_from_export_copy` do
+    // lado de lá): vai para dentro de `ReadyToCommit` e, de lá, para `last_export_sha256` no
+    // commit, para o PRÓXIMO check-in comparar contra ele. Sem isto, o hash local ficava `NULL`
+    // logo depois de toda restauração e o próximo check-in sempre lia "mudou", republicando um
+    // conteúdo idêntico ao que acabou de baixar.
+    let restored_export_sha256 = hex::encode(Sha256::digest(&db_bytes));
+
     let tmp_path = db_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(format!("neko-checkout-{}.db", uuid::Uuid::new_v4()));
     if let Err(e) = restore::stage_downloaded_snapshot(&tmp_path, &db_bytes).await {
-        return Ok(CheckoutResult {
+        return RestorePreparation::Done(CheckoutResult {
             pool,
             outcome: Err(e),
         });
     }
 
     // Ponto de não-retorno: tudo que podia falhar por rede/integridade já rodou com `pool`
-    // intacto. A identidade DESTE aparelho E o histórico de check-in que ele já tinha precisam
-    // sobreviver à troca — capturados ANTES de fechar o pool antigo, porque o arquivo baixado
-    // chega com `snapshot_state` vazio (ver `state::strip_from_export_copy`, que roda do lado de
-    // quem publicou). Sem capturar o histórico de check-in aqui, um aparelho que já publicou
-    // perderia a própria linha do tempo a cada check-out.
-    let device_id = local_state.device_id.clone();
-    let last_checkin_at = local_state.last_checkin_at.clone();
-    let last_checkin_device_id = local_state.last_checkin_device_id.clone();
+    // intacto — daqui em diante é só o commit (`commit_restore`), que roda SEMPRE até o fim (ver o
+    // doc de `RestorePreparation`). A identidade DESTE aparelho E o histórico de check-in que ele
+    // já tinha precisam sobreviver à troca — capturados AQUI, ainda com `pool` aberto, porque o
+    // arquivo baixado chega com `snapshot_state` vazio (ver `state::strip_from_export_copy`, que
+    // roda do lado de quem publicou). Sem capturar o histórico de check-in aqui, um aparelho que
+    // já publicou perderia a própria linha do tempo a cada check-out.
+    RestorePreparation::ReadyToFinish(UntimedWork::Commit(ReadyToCommit {
+        device_id: local_state.device_id.clone(),
+        last_checkin_at: local_state.last_checkin_at.clone(),
+        last_checkin_device_id: local_state.last_checkin_device_id.clone(),
+        remote_sequence: remote_manifest.sequence,
+        remote_device_id: remote_manifest.device_id,
+        restored_export_sha256,
+        pool,
+        tmp_path,
+    }))
+}
+
+/// Só avança `base_sequence` no ramo `AdoptOwnSequence` de [`UntimedWork`] — a escrita que o
+/// próprio ramo correspondente de `prepare_restore` documenta não poder rodar sob o teto de
+/// espera. Sempre roda até o fim (ver o doc de [`RestorePreparation`]).
+async fn adopt_own_sequence_restore(pool: SqlitePool, sequence: i64) -> CheckoutResult {
+    let outcome = match state::adopt_own_sequence(&pool, sequence).await {
+        Ok(()) => Ok(CheckoutOutcome::CaughtUpOwnSequence { sequence }),
+        Err(e) => Err(e),
+    };
+    CheckoutResult { pool, outcome }
+}
+
+/// Despacha o [`UntimedWork`] que [`prepare_restore`] deixou pronto — a única costura, chamada
+/// tanto por `checkout_on_open` quanto por `checkout_on_open_with_deadline`, para as duas nunca
+/// divergirem em como o trabalho pós-teto é executado.
+async fn finish_restore(work: UntimedWork, db_path: &Path) -> Result<CheckoutResult, String> {
+    match work {
+        UntimedWork::Commit(ready) => commit_restore(ready, db_path).await,
+        UntimedWork::AdoptOwnSequence { pool, sequence } => {
+            Ok(adopt_own_sequence_restore(pool, sequence).await)
+        }
+    }
+}
+
+/// Fase 2 (NUNCA abortável — ver o doc de [`RestorePreparation`]): fecha o pool antigo, troca o
+/// arquivo pelo snapshot já validado e reabre — com reversão automática para a salvaguarda se a
+/// reabertura falhar. Só chamada depois que [`prepare_restore`] devolve
+/// `ReadyToFinish(UntimedWork::Commit(_))`; nada aqui depende de rede.
+async fn commit_restore(ready: ReadyToCommit, db_path: &Path) -> Result<CheckoutResult, String> {
+    let ReadyToCommit {
+        pool,
+        tmp_path,
+        device_id,
+        last_checkin_at,
+        last_checkin_device_id,
+        remote_sequence,
+        remote_device_id,
+        restored_export_sha256,
+    } = ready;
     pool.close().await;
 
     let safeguard_path = match restore::swap_active_db_atomically(&tmp_path, db_path) {
@@ -273,29 +448,34 @@ pub async fn checkout_on_open(
         }
     };
 
-    // A troca já está confirmada neste ponto — uma falha aqui é rara (o conteúdo baixado já
-    // passou por `validate_downloaded_db`) mas não impossível (I/O transitório, disco cheio na
-    // migração). A mensagem cita o caminho da salvaguarda: o conteúdo de ANTES da troca está
-    // intacto lá (cópia, nunca movida), disponível para restauração manual se for preciso.
-    let new_pool = open_migrated_pool(db_path).await.map_err(|e| {
-        let recovery = safeguard_path
-            .as_ref()
-            .map(|p| format!("o conteúdo anterior está preservado em {}", p.display()))
-            .unwrap_or_else(|| {
-                "não havia banco anterior a preservar (primeira restauração)".into()
+    let new_pool = match reopen_after_swap_or_rollback(db_path, safeguard_path.as_deref()).await {
+        Ok(ReopenOutcome::Reopened(p)) => p,
+        // Reabrir o conteúdo recém-trocado falhou, mas HAVIA um banco funcional ANTES da troca —
+        // reverter para ele automaticamente devolve um app que abre normalmente com o conteúdo de
+        // ANTES desta tentativa, em vez de um app que não abre com uma salvaguarda ao lado que o
+        // dono precisaria achar e restaurar à mão. O desfecho ainda avisa na UI (`outcome: Err`) —
+        // a próxima abertura tenta de novo.
+        Ok(ReopenOutcome::RolledBack { pool, message }) => {
+            return Ok(CheckoutResult {
+                pool,
+                outcome: Err(message),
             });
-        format!("reabrir banco depois da restauração: {e}; {recovery}")
-    })?;
+        }
+        // Sem salvaguarda para reverter (primeira restauração) OU a própria reversão também
+        // falhou: nenhum pool utilizável sobra — a mesma falha fatal de sempre.
+        Err(fatal) => return Err(fatal),
+    };
 
     let checked_out_at = chrono::Utc::now().to_rfc3339();
     if let Err(e) = state::adopt_after_restore(
         &new_pool,
         &device_id,
-        remote_manifest.sequence,
+        remote_sequence,
         &checked_out_at,
-        &remote_manifest.device_id,
+        &remote_device_id,
         last_checkin_at.as_deref(),
         last_checkin_device_id.as_deref(),
+        &restored_export_sha256,
     )
     .await
     {
@@ -311,31 +491,113 @@ pub async fn checkout_on_open(
     })
 }
 
+/// Núcleo testável, SEM o teto de espera do boot (`checkout_on_open_with_deadline` é quem o
+/// produção de verdade chama, compondo as mesmas duas fases com o teto restrito à primeira) —
+/// `pool` já migrado no arquivo `db_path`, `drive` já autenticado. Devolve `Err` SÓ quando não
+/// sobra pool utilizável nenhum — a troca de arquivo teve sucesso, mas reabrir uma conexão nela
+/// falhou. Este é o mesmo tipo de falha fatal que a abertura inicial do banco já trata em
+/// `lib.rs` (diálogo nativo + abort); fora desse caso extremo, o retorno é sempre
+/// `Ok(CheckoutResult)` com um pool pronto para uso. Duas fases internas — ver o doc de
+/// [`RestorePreparation`] para por que a costura entre elas importa para o teto de espera do boot.
+#[cfg(test)]
+async fn checkout_on_open(
+    pool: SqlitePool,
+    db_path: &Path,
+    drive: &DriveSnapshotClient,
+) -> Result<CheckoutResult, String> {
+    match prepare_restore(pool, db_path, drive).await {
+        RestorePreparation::Done(result) => Ok(result),
+        RestorePreparation::ReadyToFinish(work) => finish_restore(work, db_path).await,
+    }
+}
+
+/// Teto de espera do check-out no BOOT: `http.rs` já dá 10s de connect + 30s de
+/// request × 3 tentativas por chamada, e `prepare_restore` faz duas chamadas sequenciais
+/// (`fetch_manifest` + `download_snapshot`) — sem teto próprio, uma rede que engole pacotes
+/// (portal cativo, VPN degradada) prende a abertura do app por dezenas de segundos a minutos,
+/// porque isto roda dentro do `block_on` síncrono do `setup()` em `lib.rs`. 20s é folgado o
+/// bastante para uma rede lenta de verdade responder ao manifest (tipicamente sub-segundo), mas
+/// bem curto perto do pior caso de uma ÚNICA tentativa HTTP (10s de connect + 30s de request) —
+/// ou seja, ao estourar o teto o app está esperando a REDE, GARANTIDO (não "quase sempre"): o
+/// teto só envolve `prepare_restore`, que nunca fecha nem troca o arquivo — ver o doc de
+/// [`RestorePreparation`] para a garantia completa. Residual conhecido: o refresh do token OAuth
+/// (`resolve_drive_client_best_effort`, chamado ANTES deste teto) usa o mesmo cliente HTTP com
+/// timeout próprio, mas não está coberto por ESTE teto — a URL do endpoint de refresh é fixa
+/// (`oauth2.googleapis.com`), não injetável para apontar a um servidor de teste, então cobri-la
+/// aqui exigiria um refactor maior que este follow-up não escopa.
+const CHECKOUT_ON_OPEN_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Roda [`checkout_on_open`] com um teto de espera: ao estourar, devolve o MESMO pool que
+/// recebeu (best-effort — "offline pleno" nunca pode travar a abertura do app esperando rede) com
+/// `outcome: Err` visível na UI. Só a fase abortável (`prepare_restore`) entra sob o teto — ver o
+/// doc de [`RestorePreparation`]. Extraído para ser testável com um `DriveSnapshotClient` que
+/// aponta a um endpoint que nunca responde, sem depender do teto de PRODUÇÃO (lento demais para
+/// um teste) — `deadline` é injetado pelo chamador.
+async fn checkout_on_open_with_deadline(
+    pool: SqlitePool,
+    db_path: &Path,
+    drive: &DriveSnapshotClient,
+    deadline: Duration,
+) -> Result<CheckoutResult, String> {
+    let pool_fallback = pool.clone();
+    // Só a fase 1 (`prepare_restore`) entra sob o teto — o trabalho de `ReadyToFinish` roda
+    // SEMPRE até o fim, nunca abortado. Isto não é cosmético: o commit fecha `pool` (o MESMO
+    // `Arc` compartilhado com `pool_fallback` acima) e, uma vez chamado, `SqlitePool::close()`
+    // marca esse `Arc` inteiro como fechado — incluindo `pool_fallback`. Um teto que também
+    // cobrisse essa fase devolveria um "pool de segurança" já morto sempre que o timeout
+    // disparasse depois desse ponto — um boot rápido, mas com um pool inutilizável.
+    match tokio::time::timeout(deadline, prepare_restore(pool, db_path, drive)).await {
+        Ok(RestorePreparation::Done(result)) => Ok(result),
+        Ok(RestorePreparation::ReadyToFinish(work)) => finish_restore(work, db_path).await,
+        Err(_elapsed) => Ok(CheckoutResult {
+            pool: pool_fallback,
+            outcome: Err(format!(
+                "check-out sem resposta do Drive em {}s — seguindo com o banco local; a próxima \
+                 abertura tenta de novo",
+                deadline.as_secs()
+            )),
+        }),
+    }
+}
+
 /// O gancho de verdade que `lib.rs` chama na abertura do app: resolve o cliente do Drive via
-/// [`resolve_drive_client_best_effort`] e SILENCIA qualquer motivo de não tentar — nunca conectou,
-/// sem client id configurado, token sem o escopo `drive.appdata`. Nenhum desses é uma falha do
-/// check-out em si, é "sync ainda não configurado" (offline pleno). Uma falha DEPOIS de decidir
-/// tentar (rede, integridade) continua reportada em `outcome`, nunca engolida — só a decisão de
-/// TENTAR é best-effort, não o resultado da tentativa.
+/// [`resolve_drive_client_best_effort`] e SILENCIA os motivos legítimos de não tentar — nunca
+/// conectou, sem client id configurado, escopo `drive.appdata` ainda não concedido. Nenhum desses
+/// é uma falha do check-out em si, é "sync ainda não configurado" (offline pleno) — e sem nada
+/// para tentar, nenhum aviso de uma tentativa ANTERIOR se sustenta (limpa junto). Uma falha
+/// DEPOIS de decidir tentar (rede ao resolver o token, rede/integridade dentro de
+/// `checkout_on_open`, ou o teto de espera acima estourando) continua reportada em `outcome`,
+/// nunca engolida — só a decisão de TENTAR é best-effort, não o resultado da tentativa. Por isso
+/// os três caminhos (não configurado, resolver falhou de verdade, `checkout_on_open_with_deadline`
+/// rodou) convergem para o MESMO registro de desfecho abaixo, em vez de cada um sair cedo — a
+/// diferença entre "nada a avisar" e "chegou a falhar" não pode depender de qual ramo lembrou de
+/// gravar.
 pub async fn checkout_on_open_best_effort(
     pool: SqlitePool,
     db_path: &Path,
     app_dir: &Path,
 ) -> Result<CheckoutResult, String> {
-    let Some(drive) = resolve_drive_client_best_effort(&pool, app_dir).await else {
-        return Ok(CheckoutResult {
+    let result = match resolve_drive_client_best_effort(&pool, app_dir).await {
+        Ok(Some(drive)) => {
+            checkout_on_open_with_deadline(pool, db_path, &drive, CHECKOUT_ON_OPEN_TIMEOUT).await?
+        }
+        Ok(None) => CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
-        });
+        },
+        Err(e) => CheckoutResult {
+            pool,
+            outcome: Err(e),
+        },
     };
-    let result = checkout_on_open(pool, db_path, &drive).await?;
 
     // Persiste o desfecho para a UI de Conexão (ADR-0015): a recusa por schema mais
-    // novo e a falha de rede/integridade merecem um aviso na tela, não só uma linha de log que o
-    // dono nunca vê. `NothingToDo`/`Restored`/`CaughtUpOwnSequence` são sucesso — limpam qualquer
-    // aviso de uma tentativa ANTERIOR, para ele não sobreviver a um check-out que deu certo depois.
-    // Melhor esforço: uma falha ao GRAVAR o desfecho não pode derrubar o check-out em si, que já
-    // rodou até aqui — só loga e segue com o `pool` que `checkout_on_open` devolveu.
+    // novo e a falha de rede/integridade/resolução do cliente merecem um aviso na tela, não só uma
+    // linha de log que o dono nunca vê. `NothingToDo`/`Restored`/`CaughtUpOwnSequence` são sucesso
+    // — limpam qualquer aviso de uma tentativa ANTERIOR, para ele não sobreviver a um check-out que
+    // deu certo (ou que nem tinha o que tentar) depois. Melhor esforço: uma falha ao GRAVAR o
+    // desfecho não pode derrubar o check-out em si, que já rodou até aqui — só loga e segue com o
+    // `pool` do resultado.
     let (outcome_tag, outcome_detail) = outcome_warning_fields(&result.outcome);
     if let Err(e) = state::record_checkout_outcome(
         &result.pool,
@@ -441,7 +703,7 @@ pub async fn probe_newer_snapshot_on_focus_best_effort(
     }
     crate::commands::app_setting_set(pool, LAST_FOCUS_PROBE_AT_KEY, &now.to_string()).await?;
 
-    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await else {
+    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await? else {
         return Ok(());
     };
     probe_newer_snapshot_on_focus(pool, &drive).await
@@ -819,6 +1081,68 @@ mod tests {
             .await
             .expect("best-effort nunca falha quando não há como tentar");
         assert_eq!(result.outcome, Ok(CheckoutOutcome::NothingToDo));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn best_effort_clears_a_pending_warning_when_boot_has_nothing_configured_to_retry() {
+        // Item 5 da issue #446: sem client id configurado não existe check-out para "tentar de
+        // novo na próxima abertura" — um aviso de uma tentativa ANTERIOR não pode sobreviver a um
+        // boot que nem chega a decidir tentar.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        state::load_or_init(&pool).await.unwrap();
+        state::record_checkout_outcome(&pool, Some("error"), Some("tentativa anterior"))
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        checkout_on_open_best_effort(pool.clone(), &db_path, &app_dir)
+            .await
+            .expect("best-effort nunca falha quando não há como tentar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.last_checkout_outcome, None);
+        assert_eq!(after.last_checkout_outcome_detail, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn best_effort_persists_an_error_outcome_when_the_client_resolver_really_fails() {
+        // Diferente de "nunca configurado" (silencioso): um token PRESENTE mas ILEGÍVEL é uma
+        // tentativa que decidiu tentar e falhou de verdade — a UI de Conexão precisa saber disso,
+        // não só um `eprintln!` que o dono nunca vê.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        // A linha singleton já existe (bookkeeping de um boot anterior) — o mesmo pressuposto
+        // realista do teste do aviso pendente acima: um aparelho recém-instalado, sem NENHUM
+        // bookkeeping prévio, não tem como já ter um client id + token corrompido configurados.
+        state::load_or_init(&pool).await.unwrap();
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(
+            app_dir.join("oauth-token.enc"),
+            b"nao sou um token cifrado valido",
+        )
+        .unwrap();
+
+        let result = checkout_on_open_best_effort(pool.clone(), &db_path, &app_dir)
+            .await
+            .expect("best-effort não propaga a falha do resolver como Err do próprio fn");
+        assert!(
+            result.outcome.is_err(),
+            "token ilegível é uma falha real, não 'nada a fazer'"
+        );
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.last_checkout_outcome.as_deref(), Some("error"));
+        assert!(after.last_checkout_outcome_detail.is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1609,6 +1933,327 @@ mod tests {
             now.to_string(),
             "dentro do debounce: a marca não deve avançar"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Teto de espera do check-out no boot -----------------------------------------------------
+
+    #[tokio::test]
+    async fn checkout_on_open_with_deadline_gives_up_and_keeps_the_original_pool_usable_when_the_network_hangs()
+     {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+
+        // Listener TCP que aceita a conexão e nunca responde — simula uma rede que engole pacotes
+        // (portal cativo, VPN degradada): o handshake TCP conclui, mas a resposta HTTP nunca
+        // chega. O request ficaria pendurado até o timeout de 30s de `http.rs`; o teto injetado
+        // abaixo (200ms) precisa vencer bem antes disso.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind listener de teste");
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::mem::forget(stream);
+            }
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        });
+        let drive = DriveSnapshotClient::new(token(), format!("http://{addr}"));
+
+        let result =
+            checkout_on_open_with_deadline(pool, &db_path, &drive, Duration::from_millis(200))
+                .await
+                .expect(
+                    "o teto de espera nunca é uma falha fatal — sempre devolve um pool utilizável",
+                );
+
+        let err = result.outcome.unwrap_err();
+        assert!(err.contains("check-out"), "erro: {err}");
+
+        // O pool devolvido continua o MESMO banco, utilizável — a tentativa abandonada nunca
+        // chegou perto de fechá-lo (ainda estava esperando a resposta do manifest).
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checkout_on_open_with_deadline_restores_normally_when_the_deadline_is_never_reached() {
+        // O commit (fechar o pool antigo, trocar o arquivo, reabrir) precisa rodar até o FIM
+        // mesmo passando pelo wrapper com teto — ele só embrulha a fase 1 (`prepare_restore`).
+        // Espelha
+        // `restores_the_active_db_when_remote_advanced_and_schema_is_compatible`, mas atravessa
+        // `checkout_on_open_with_deadline` em vez de `checkout_on_open` direto, com um teto folgado
+        // que nunca deveria disparar — prova que a composição prepare→commit por trás do teto
+        // produz o MESMO resultado (pool novo, utilizável, conteúdo do remoto).
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let remote_bytes = build_remote_db_bytes(&dir, "veio-do-remoto-via-deadline").await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 9,
+            created_at: "2026-08-12T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: local_schema,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/snap-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(remote_bytes)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open_with_deadline(pool, &db_path, &drive, Duration::from_secs(5))
+            .await
+            .expect("restauração deve suceder");
+        assert!(matches!(
+            result.outcome,
+            Ok(CheckoutOutcome::Restored { .. })
+        ));
+
+        // O pool devolvido é genuinamente utilizável (não fechado/poluído pelo wrapper de teto) e
+        // reflete o conteúdo do remoto.
+        let marker = crate::commands::app_setting_get(&result.pool, "restore_marker")
+            .await
+            .unwrap();
+        assert_eq!(marker.as_deref(), Some("veio-do-remoto-via-deadline"));
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 9);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Reversão automática quando reabrir depois da troca falha ---------------------------------
+
+    #[tokio::test]
+    async fn reopen_after_swap_or_rollback_reopens_normally_when_the_new_content_opens_fine() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        // Grava um banco migrado válido em `db_path` (simula a troca já ter colocado um conteúdo
+        // são no lugar) e descarta o pool — só o arquivo importa daqui em diante.
+        test_pool(&db_path).await.close().await;
+
+        let outcome = reopen_after_swap_or_rollback(&db_path, None)
+            .await
+            .expect("reabrir um conteúdo válido nunca falha");
+        match outcome {
+            ReopenOutcome::Reopened(_) => {}
+            other => panic!("esperava Reopened, veio {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn reopen_after_swap_or_rollback_falls_back_to_the_safeguard_when_the_new_content_wont_open()
+     {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let safeguard_path = dir.join("neko-finance.pre-restore-test.db");
+        {
+            let safeguard_pool = test_pool(&safeguard_path).await;
+            crate::commands::app_setting_set(
+                &safeguard_pool,
+                "safeguard_marker",
+                "conteudo-de-antes",
+            )
+            .await
+            .unwrap();
+            safeguard_pool.close().await;
+        }
+        // `db_path`: o "conteúdo recém-trocado" que não abre — bytes que não são um SQLite válido
+        // (simula I/O transitório ou disco cheio na migração da reabertura).
+        std::fs::write(&db_path, b"nao sou um sqlite valido").unwrap();
+
+        let outcome = reopen_after_swap_or_rollback(&db_path, Some(safeguard_path.as_path()))
+            .await
+            .expect("reversão automática deve suceder quando a salvaguarda existe");
+        match outcome {
+            ReopenOutcome::RolledBack { pool, message } => {
+                assert!(message.contains("revertido"), "mensagem: {message}");
+                let marker = crate::commands::app_setting_get(&pool, "safeguard_marker")
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    marker.as_deref(),
+                    Some("conteudo-de-antes"),
+                    "o banco ativo precisa voltar a ser o conteúdo de ANTES da troca, não ficar \
+                     preso no conteúdo quebrado que não abre"
+                );
+            }
+            other => panic!("esperava RolledBack, veio {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn reopen_after_swap_or_rollback_is_fatal_without_a_safeguard_to_fall_back_to() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        std::fs::write(&db_path, b"nao sou um sqlite valido").unwrap();
+
+        let err = reopen_after_swap_or_rollback(&db_path, None)
+            .await
+            .expect_err("primeira restauração sem salvaguarda: nada para reverter, falha fatal");
+        assert!(
+            err.contains("reabrir banco depois da restauração"),
+            "erro: {err}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn reopen_after_swap_or_rollback_is_fatal_when_the_safeguard_itself_is_also_broken() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let safeguard_path = dir.join("neko-finance.pre-restore-test.db");
+        std::fs::write(&db_path, b"nao sou um sqlite valido").unwrap();
+        std::fs::write(&safeguard_path, b"a salvaguarda tambem nao abre").unwrap();
+
+        let err = reopen_after_swap_or_rollback(&db_path, Some(safeguard_path.as_path()))
+            .await
+            .expect_err("reversão também quebrada: nenhum pool utilizável sobra, falha fatal");
+        assert!(
+            err.contains("reversão automática também falhou"),
+            "erro: {err}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Falha real depois de decidir tentar não pode virar NothingToDo ---------------------------
+
+    #[tokio::test]
+    async fn resolve_drive_client_best_effort_is_silently_none_without_a_configured_client_id() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
+        assert!(matches!(result, Ok(None)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_drive_client_best_effort_is_silently_none_when_never_authenticated() {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        // client id configurado, mas NENHUM token guardado — "nunca conectou" continua
+        // silencioso, a mesma classe de "não configurado" da falta de client id.
+
+        let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
+        assert!(matches!(result, Ok(None)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_drive_client_best_effort_reports_a_real_error_when_the_stored_token_is_unreadable()
+     {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        // Um token "existe" (arquivo cifrado presente), mas é ilegível — corrupção, não "nunca
+        // conectou": bytes que não formam um ciphertext válido para o esquema de `secret_file`.
+        std::fs::write(
+            app_dir.join("oauth-token.enc"),
+            b"nao sou um token cifrado valido",
+        )
+        .unwrap();
+
+        let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
+        assert!(
+            result.is_err(),
+            "token presente mas ilegível é uma tentativa que FALHOU, não 'nunca configurado' — \
+             não pode desaparecer como NothingToDo"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_drive_client_best_effort_is_silently_none_when_the_token_lacks_the_drive_scope()
+     {
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        {
+            // Serializado com os testes de `token_store` que também usam o fallback de arquivo —
+            // mesmo lock global, mesmo motivo (evitar corrida na env var entre threads de teste).
+            // Escopo restrito ao trecho SÍNCRONO: nunca atravessa um `.await` (clippy reprova um
+            // `std::sync::Mutex` mantido através de um ponto de suspensão).
+            let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            let stored = crate::oauth::token_store::StoredToken {
+                access_token: "ya29.test".into(),
+                refresh_token: "1//test".into(),
+                expires_at: 9_999_999_999, // não expira — nenhuma chamada de rede é feita
+                scope: "https://www.googleapis.com/auth/spreadsheets".into(), // sem drive.appdata
+            };
+            crate::oauth::token_store::store_token(&app_dir, &stored).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        let pool = test_pool(&db_path).await;
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+
+        let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
+        // Escopo `drive.appdata` ainda não concedido é "ainda não migrou para o re-consentimento"
+        // — a mesma classe de "não configurado" da falta de client id/token, nunca uma falha de
+        // tentativa (a spec espera o re-consentimento único, não um erro a cada boot).
+        assert!(matches!(result, Ok(None)));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
