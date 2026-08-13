@@ -1,0 +1,50 @@
+Critério 2 da #430 ("conversa completa funciona no aparelho com as ferramentas de estado sobre
+o espelho local") — verificado no aparelho de referência (SM-S926B) e ALCANÇADO.
+
+## Fixture sintético
+
+`.xlsx` sintético gerado na mesma geometria dos fixtures de teste de
+`src-tauri/src/commands/sheets_import.rs` (aba "2026", blocos mensais lado a lado por nome de
+mês, cabeçalho Data/Entrada/Saída/Diário/Saldo): JULHO com 4 lançamentos de baseline e AGOSTO
+(mês corrente, hoje = 2026-08-13) com 1 entrada (R$ 5.200,00) e 6 saídas (R$ 180+95+320+140+
+275+60 = R$ 1.070,00). Nenhum dado real — valores e datas fabricados só para este teste. Todo
+dia usado por QUALQUER bloco precisa de número na coluna do PRIMEIRO bloco (a leitura de dia é
+global por linha, não por bloco — armadilha real do parser encontrada e documentada ao gerar o
+fixture; a primeira tentativa só trouxe 5 das 11 linhas por isso).
+
+## Import local
+
+Configurações › Conexão › Gerenciar › "Escolher arquivo .xlsx" → seletor nativo do Android
+(SAF) → Downloads → arquivo sintético. Toast: "Imported 11 total rows from: 2026 (11 ...)" —
+`import-xlsx-sintetico-11-linhas.png`. Lançamentos de agosto/2026 batem exatamente com o
+fixture — `lancamentos-importados-agosto-2026.png` (Saídas de R$60, R$275, R$140... "Custo de
+vida — R$1.070,00 no mês").
+
+## Conversa local, sem consentimento de nuvem
+
+Tela Mia, sem tocar em "Autorizar" (o consentimento de nuvem nunca foi concedido nesta
+verificação): pílula "Como o mês está indo?" →
+
+    Entradas do mês       R$ 5.200,00
+  − Saídas e economia      R$ 1.070,00
+  = Performance do mês     R$ 4.130,00
+
+Rodapé: "Cálculo determinístico · Lê sua planilha · Responde local" —
+`mia-local-como-o-mes-esta-indo.png`. Os números batem exatamente com o fixture importado
+(5200 − 1070 = 4130), provando que a ferramenta de estado leu o espelho local real, não um
+valor fixo.
+
+Segunda pergunta, "Quanto posso gastar hoje?" (ferramenta de teto) →
+
+    Limite do caixa           R$ 0,00
+  min Limite da economia   −R$ 2.040,00
+    = Pode gastar hoje         R$ 0,00
+
+"Você ainda não estipulou um teto do diário — hoje o dia corre só pelo caixa e pela economia."
+— resposta HONESTA (o fixture não tem coluna Diário populada, e a Mia relata a ausência de dado
+em vez de inventar um teto) — `mia-local-quanto-posso-gastar-hoje.png`. Mesmo rodapé
+determinístico/local nas duas rodadas.
+
+Nenhuma das duas rodadas passou pelo painel de consentimento de nuvem — a conversa local
+respondeu sem qualquer autorização concedida, confirmando o desenho da spec 044 (as seis
+perguntas do piso determinístico respondem local sempre, ligado ou não).

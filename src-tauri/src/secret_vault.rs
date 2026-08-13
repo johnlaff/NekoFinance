@@ -52,24 +52,60 @@ impl SecretVault for KeyringVault {
     }
 }
 
+/// Uma instalação que pode falhar e vale tentar de novo na PRÓXIMA chamada — ao contrário de
+/// `std::sync::Once`, que marca "feito" mesmo quando a tentativa fracassa e trava essa decisão
+/// para sempre. Extraído do laço do Android para a semântica de retry ser testável sem depender
+/// do contexto JNI real (o teste roda em qualquer plataforma).
+struct RetryUntilSuccess {
+    installed: std::sync::Mutex<bool>,
+}
+
+impl RetryUntilSuccess {
+    const fn new() -> Self {
+        Self {
+            installed: std::sync::Mutex::new(false),
+        }
+    }
+
+    /// Corre `attempt` só enquanto ainda não instalado; marca instalado apenas quando `attempt`
+    /// devolve `true`. Uma falha não é gravada — a próxima chamada tenta de novo.
+    fn ensure(&self, attempt: impl FnOnce() -> bool) {
+        let mut installed = self
+            .installed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *installed {
+            return;
+        }
+        if attempt() {
+            *installed = true;
+        }
+    }
+}
+
 /// O cofre da plataforma corrente. Sempre [`KeyringVault`] — a variação por plataforma vive no
 /// back-end que a primeira chamada registra no `keyring`, não numa struct alternativa.
 ///
-/// O registro é PREGUIÇOSO (`Once`): o primeiro consumidor real (o check-out do snapshot ao
-/// abrir o app, que já dispara isto de dentro do próprio `.setup()` do builder, buscando o token
-/// do Google) é quem paga o custo, uma vez. [`install_platform_backend`] espera o contexto ficar
-/// pronto em vez de assumir que já está — ver o racional lá.
+/// O registro é PREGUIÇOSO: o primeiro consumidor real (o check-out do snapshot ao abrir o app,
+/// que já dispara isto de dentro do próprio `.setup()` do builder, buscando o token do Google) é
+/// quem paga o custo. [`install_platform_backend`] espera o contexto ficar pronto em vez de supor
+/// que já está — ver o racional lá. Diferente de um `Once` cru, uma sondagem que FALHOU não trava
+/// a decisão: a próxima chamada (a próxima vez que algo precisar do cofre) tenta de novo, porque
+/// "não ficou pronto em 2s" não é o mesmo que "nunca vai ficar pronto".
 pub(crate) fn platform_vault() -> &'static dyn SecretVault {
     static VAULT: KeyringVault = KeyringVault;
-    static INSTALL_PLATFORM_BACKEND: std::sync::Once = std::sync::Once::new();
-    INSTALL_PLATFORM_BACKEND.call_once(install_platform_backend);
+    static INSTALL_PLATFORM_BACKEND: RetryUntilSuccess = RetryUntilSuccess::new();
+    INSTALL_PLATFORM_BACKEND.ensure(install_platform_backend);
     &VAULT
 }
 
 /// Registra o back-end Android do `keyring` (AndroidKeyStore + SharedPreferences via JNI puro,
 /// sem plugin Kotlin — a leitura do contexto JNI vem de `ndk-context`). Chamada só por
-/// [`platform_vault`], preguiçosamente — nunca direto. No-op em qualquer outra plataforma: o
-/// keyring já nasce com o back-end nativo do SO (Keychain/Credential Manager/Secret Service).
+/// [`platform_vault`], preguiçosamente — nunca direto. No-op (sempre `true`, "nada a instalar")
+/// em qualquer outra plataforma: o keyring já nasce com o back-end nativo do SO (Keychain/
+/// Credential Manager/Secret Service). Devolve `true` quando o back-end ficou registrado e
+/// `false` quando a sondagem falhou desta vez — sinal para [`RetryUntilSuccess`] tentar de novo
+/// na PRÓXIMA chamada, em vez de aceitar uma leitura cedo demais como veredito definitivo.
 ///
 /// No Android, a activity nativa começa a rodar `run()` numa thread própria ANTES de o laço de
 /// eventos do `tao` terminar de registrar o contexto JNI (`ndk-context`) — uma corrida do próprio
@@ -78,8 +114,9 @@ pub(crate) fn platform_vault() -> &'static dyn SecretVault {
 /// primeira linha útil dele, síncrono na mesma thread que roda `run()` — cedo demais para supor o
 /// contexto pronto. Por isso sondamos o contexto com `catch_unwind` em vez de assumir pronto — o
 /// estado é monotônico (uma vez registrado pela activity, só some quando ela é destruída), então
-/// uma sondagem que teve sucesso nunca regride; só a primeira tentativa é incerta.
-fn install_platform_backend() {
+/// uma sondagem que teve sucesso nunca regride; só uma sondagem malsucedida é, por natureza,
+/// provisória.
+fn install_platform_backend() -> bool {
     #[cfg(target_os = "android")]
     {
         const MAX_ATTEMPTS: u32 = 40;
@@ -104,10 +141,10 @@ fn install_platform_backend() {
         if !ready {
             eprintln!(
                 "[secret_vault] contexto Android (ndk-context) não ficou pronto em {}ms; \
-                 segredos caem no fallback de arquivo cifrado (NEKO_INSECURE_FILE_FALLBACK)",
+                 tentando de novo na próxima chamada ao cofre",
                 u64::from(MAX_ATTEMPTS) * RETRY_INTERVAL.as_millis() as u64
             );
-            return;
+            return false;
         }
 
         if let Err(error) = android_keyring::set_android_keyring_credential_builder() {
@@ -117,6 +154,7 @@ fn install_platform_backend() {
             );
         }
     }
+    true
 }
 
 /// `NEKO_INSECURE_FILE_FALLBACK` é um env var de PROCESSO lido tanto por `mia::key_store` quanto por
@@ -188,6 +226,57 @@ pub(crate) mod double {
                 .remove(&Self::key(service, username));
             Ok(())
         }
+    }
+}
+
+/// A regressão do bug real: no aparelho, a sondagem do contexto JNI falhava na janela de 2s da
+/// PRIMEIRA chamada (WebView ainda inicializando) e um `std::sync::Once` cru travava essa falha
+/// para sempre — toda chamada seguinte usava um back-end nunca registrado, que aceitava `store()`
+/// sem erro mas nunca persistia (`load()` sempre devolvia `None`). `set_mia_api_key` retornava
+/// sucesso e a chave "sumia". Este teste prova a semântica correta sem depender do JNI real: uma
+/// tentativa que falha PODE ser refeita na próxima chamada; só o sucesso trava a decisão.
+#[cfg(test)]
+mod retry_until_success_tests {
+    use super::RetryUntilSuccess;
+    use std::cell::Cell;
+
+    #[test]
+    fn uma_falha_nao_trava_a_proxima_tentativa() {
+        let gate = RetryUntilSuccess::new();
+        let calls = Cell::new(0);
+
+        gate.ensure(|| {
+            calls.set(calls.get() + 1);
+            false // contexto "não ficou pronto" — como no bug real
+        });
+        assert_eq!(calls.get(), 1);
+
+        gate.ensure(|| {
+            calls.set(calls.get() + 1);
+            true // na chamada seguinte, o contexto já está pronto
+        });
+        assert_eq!(
+            calls.get(),
+            2,
+            "uma tentativa malsucedida precisa ser refeita, nunca travada para sempre"
+        );
+    }
+
+    #[test]
+    fn um_sucesso_trava_a_decisao_e_nao_tenta_de_novo() {
+        let gate = RetryUntilSuccess::new();
+        let calls = Cell::new(0);
+
+        gate.ensure(|| {
+            calls.set(calls.get() + 1);
+            true
+        });
+        gate.ensure(|| {
+            calls.set(calls.get() + 1);
+            panic!("não deveria tentar de novo depois de um sucesso");
+        });
+
+        assert_eq!(calls.get(), 1);
     }
 }
 
