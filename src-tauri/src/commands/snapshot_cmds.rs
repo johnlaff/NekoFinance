@@ -226,10 +226,22 @@ pub(crate) async fn drive_checkin_core(
         schema_version,
     };
 
-    drive.upload_snapshot(&db_bytes, &manifest).await?;
+    // Gravada ANTES do upload (ADR-0015, issue #446 item 11): se o upload confirmar mas a
+    // gravação abaixo (`record_checkin`) morrer antes de terminar, este valor sobrevive à queda —
+    // é o que a guarda do próprio `device_id` em `checkout::checkout_on_open` usa para reconhecer
+    // "fui eu, upload confirmado" no próximo boot, em vez de restaurar o próprio snapshot por
+    // cima de trabalho feito depois.
+    state::record_pending_publish(pool, Some(candidate_sequence)).await?;
+    if let Err(e) = drive.upload_snapshot(&db_bytes, &manifest).await {
+        // O upload em si falhou — nada chegou a existir no Drive com esta sequência, então não há
+        // nada para a guarda reconciliar. Limpa de volta para não deixar um valor órfão.
+        let _ = state::record_pending_publish(pool, None).await;
+        return Err(e);
+    }
 
     // Só avança o estado local DEPOIS do upload confirmado — uma falha de rede no meio deixa a
     // base local intocada, então o próximo check-in tenta a MESMA sequência de novo.
+    // `record_checkin` limpa `pending_publish_sequence` de volta para `None` (a gravação terminou).
     state::record_checkin(
         pool,
         candidate_sequence,
@@ -296,6 +308,14 @@ pub struct DriveConflictDetails {
     pub remote_manifest: SnapshotManifest,
     pub local_gestures: Vec<conflict::ConflictGesture>,
     pub remote_gestures: Vec<conflict::ConflictGesture>,
+    /// Identidade DESTE aparelho — mesmo campo de `DriveCheckinInfo` (`configView.driveCheckoutLabel`).
+    /// Um conflito genuíno nunca deveria trazer `remote_manifest.device_id` igual a este (a
+    /// disputa é, por definição, entre DOIS aparelhos), mas a tela não pode assumir essa
+    /// invariante silenciosamente: no cenário do check-in morto (`resolve_conflict_keep_local_core`
+    /// cuja gravação local caiu antes de terminar), o manifest remoto que a tela busca a seguir
+    /// pode ser a NOSSA PRÓPRIA publicação — sem comparar, `conflictRemoteDeviceLabel` cravaria
+    /// "outro aparelho" para o próprio id do dono.
+    pub this_device_id: String,
 }
 
 /// Núcleo testável de `drive_conflict_details`. Não repete o export/hash caro do check-in — só
@@ -306,35 +326,53 @@ pub struct DriveConflictDetails {
 /// um arquivo temporário e ler o `sync_log` de lá em modo só-leitura — nunca migrado, nunca trocado
 /// pelo banco ativo (essa troca só acontece se o dono escolher `use_remote`, em
 /// `resolve_conflict_use_remote_core`); o temporário é removido antes de devolver, sucesso ou erro.
+///
+/// Auto-cura (ADR-0015, issue #446 item 10a): quando a checagem defensiva descobre que a disputa
+/// já não se sustenta (remoto sumiu, ou não avançou mais além da base), `conflict_pending_since`
+/// é limpo ANTES de devolver o erro — sem isto, o flag ficava ligado para sempre se a disputa
+/// deixasse de existir sem o dono agir (o outro aparelho resolveu sozinho, ou o snapshot remoto
+/// sumiu), com os gatilhos automáticos desligados e a tela de conflito reabrindo a cada
+/// lançamento só para falhar no mesmo fetch. Melhor esforço: uma falha ao LIMPAR o flag não pode
+/// esconder o erro original, que já é o motivo real de o dono ver esta tela falhar.
 pub(crate) async fn drive_conflict_details_core(
     pool: &SqlitePool,
     app_dir: &Path,
     drive: &DriveSnapshotClient,
 ) -> Result<DriveConflictDetails, String> {
     let local_state = state::load_or_init(pool).await?;
-    let remote_manifest = drive
-        .fetch_manifest()
-        .await?
-        .ok_or_else(|| NO_CONFLICT_NO_REMOTE_MANIFEST.to_string())?;
+    let remote_manifest = match drive.fetch_manifest().await? {
+        Some(m) => m,
+        None => {
+            let _ = state::record_conflict_pending(pool, None).await;
+            return Err(NO_CONFLICT_NO_REMOTE_MANIFEST.to_string());
+        }
+    };
     if remote_manifest.sequence <= local_state.base_sequence {
+        let _ = state::record_conflict_pending(pool, None).await;
         return Err(
             "Nenhum conflito pendente: o remoto não avançou além da última base local.".into(),
         );
     }
 
-    let since = conflict::base_anchor(
-        local_state.last_checkin_at.as_deref(),
-        local_state.last_checkout_at.as_deref(),
-    );
-    let local_gestures = conflict::gestures_since(pool, since.as_deref()).await?;
+    // Âncora por SEQUÊNCIA (issue #446 D3 do PR #447), nunca por timestamp: `base_sync_log_seq`
+    // é o `MAX(sync_log.seq)` capturado no momento em que os dois aparelhos eram bytes idênticos
+    // (o último sync) — o MESMO valor nos dois lados, sem depender de qual relógio está certo.
+    let since = local_state.base_sync_log_seq;
+    let local_gestures = conflict::gestures_since(pool, since).await?;
 
-    let remote_bytes = drive.download_snapshot().await?.ok_or_else(|| {
-        "Nenhum conflito pendente: o snapshot do outro aparelho sumiu do Drive.".to_string()
-    })?;
+    let remote_bytes = match drive.download_snapshot().await? {
+        Some(b) => b,
+        None => {
+            let _ = state::record_conflict_pending(pool, None).await;
+            return Err(
+                "Nenhum conflito pendente: o snapshot do outro aparelho sumiu do Drive.".into(),
+            );
+        }
+    };
     let tmp_path = app_dir.join(format!("neko-conflict-peek-{}.db", uuid::Uuid::new_v4()));
     let remote_gestures = async {
         restore::stage_downloaded_snapshot(&tmp_path, &remote_bytes).await?;
-        conflict::gestures_since_in_file(&tmp_path, since.as_deref()).await
+        conflict::gestures_since_in_file(&tmp_path, since).await
     }
     .await;
     let _ = std::fs::remove_file(&tmp_path);
@@ -344,6 +382,7 @@ pub(crate) async fn drive_conflict_details_core(
         remote_manifest,
         local_gestures,
         remote_gestures,
+        this_device_id: local_state.device_id,
     })
 }
 
@@ -415,7 +454,15 @@ pub(crate) async fn resolve_conflict_keep_local_core(
         schema_version,
     };
 
-    drive.upload_snapshot(&db_bytes, &manifest).await?;
+    // Mesmo cuidado do check-in normal (ADR-0015, issue #446 item 11): `resolved_sequence` pode
+    // passar de `base + 1` (é `max(base + 1, remote + 1)`), então a guarda do próprio `device_id`
+    // em `checkout::checkout_on_open` precisa da sequência PRETENDIDA, não da aritmética antiga —
+    // esta é a porta que a janela `base + 1` nunca cobria.
+    state::record_pending_publish(pool, Some(resolved_sequence)).await?;
+    if let Err(e) = drive.upload_snapshot(&db_bytes, &manifest).await {
+        let _ = state::record_pending_publish(pool, None).await;
+        return Err(e);
+    }
     // Só avança o estado local DEPOIS do upload confirmado — mesmo cuidado do check-in normal.
     state::record_checkin(
         pool,
@@ -1218,6 +1265,12 @@ mod tests {
     /// Um segundo banco migrado com um gesto próprio no `sync_log` e `snapshot_state` vazio (o
     /// mesmo perfil de `checkout.rs::build_remote_db_bytes`) — o "outro aparelho" que
     /// `drive_conflict_details_core` baixa para ler os gestos REMOTOS.
+    ///
+    /// Semeia um gesto PLACEHOLDER antes do gesto real (`seq = 1`) para simular a base em comum:
+    /// na produção, local e remoto eram bytes idênticos no momento do último sync — o `sync_log`
+    /// dos dois lados tinha o MESMO `MAX(seq)` naquele instante por construção. Sem este
+    /// placeholder, o único gesto deste banco ficaria com `seq = 1`, e uma âncora `since = 1`
+    /// (a base capturada do lado local) o excluiria por engano.
     async fn build_remote_db_bytes_with_gesture(
         dir: &std::path::Path,
         timestamp: &str,
@@ -1225,6 +1278,7 @@ mod tests {
     ) -> Vec<u8> {
         let remote_path = dir.join(format!("remote-conflict-{}.db", uuid::Uuid::new_v4()));
         let remote_pool = checkout::open_migrated_pool(&remote_path).await.unwrap();
+        seed_gesture(&remote_pool, "2026-01-01 00:00:00", "import").await;
         seed_gesture(&remote_pool, timestamp, event_type).await;
         sqlx::query("DELETE FROM snapshot_state")
             .execute(&remote_pool)
@@ -1239,11 +1293,14 @@ mod tests {
         let app_dir = test_app_dir();
         let pool = test_pool(&app_dir).await;
         let local = state::load_or_init(&pool).await.unwrap();
+        // Antes da base em comum (`seq = 1`, mesmo placeholder que `build_remote_db_bytes_with_gesture`
+        // semeia do lado remoto): não pode aparecer na lista.
+        seed_gesture(&pool, "2026-08-10 09:00:00", "import").await;
+        // `record_checkin` captura `base_sync_log_seq = MAX(seq) = 1` NESTE momento — a âncora de
+        // corte (issue #446 D3 do PR #447), nunca mais o timestamp deste check-in.
         state::record_checkin(&pool, 1, "2026-08-11T10:00:00Z", &local.device_id, "hash-1")
             .await
             .unwrap();
-        // Antes da base em comum: não pode aparecer na lista.
-        seed_gesture(&pool, "2026-08-10 09:00:00", "import").await;
         // Depois da base em comum: é exatamente o que a tela de conflito precisa mostrar.
         seed_gesture(&pool, "2026-08-12 09:00:00", "write_back").await;
         // O outro aparelho tem o SEU PRÓPRIO gesto — precisa aparecer em `remote_gestures`, nunca
@@ -1313,6 +1370,11 @@ mod tests {
             "o gesto do outro aparelho vem numa lista PRÓPRIA"
         );
         assert_eq!(details.remote_gestures[0].event_type, "import");
+        assert_eq!(
+            details.this_device_id, local.device_id,
+            "identidade deste aparelho vai junto (item 11b, issue #446) — a tela compara antes \
+             de rotular \"outro aparelho\""
+        );
 
         std::fs::remove_dir_all(&app_dir).ok();
     }
@@ -1323,6 +1385,12 @@ mod tests {
         let pool = test_pool(&app_dir).await;
         let local = state::load_or_init(&pool).await.unwrap();
         state::record_checkin(&pool, 3, "2026-08-11T10:00:00Z", &local.device_id, "hash-1")
+            .await
+            .unwrap();
+        // Disputa persistida de uma tentativa ANTERIOR — o cenário real de auto-cura (item 10a,
+        // issue #446): outro aparelho resolveu sozinho, ou o remoto regrediu, e a checagem
+        // defensiva abaixo é quem descobre que ela já não se sustenta.
+        state::record_conflict_pending(&pool, Some("2026-08-12T07:00:00Z"))
             .await
             .unwrap();
 
@@ -1358,6 +1426,47 @@ mod tests {
             .await
             .expect_err("remoto na própria base não é conflito nenhum");
         assert!(err.contains("Nenhum conflito pendente"), "erro: {err}");
+
+        let state_after = state::load_or_init(&pool).await.unwrap();
+        assert!(
+            state_after.conflict_pending_since.is_none(),
+            "auto-cura: a disputa não se sustenta mais — o gate dos gatilhos automáticos libera"
+        );
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn conflict_details_auto_heals_the_pending_flag_when_the_remote_snapshot_disappears() {
+        // Mesma auto-cura (item 10a, issue #446), pela outra porta defensiva: nenhum manifest
+        // remoto nenhum para disputar (o snapshot sumiu do Drive entre a recusa do check-in e o
+        // fetch desta tela).
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+        state::record_conflict_pending(&pool, Some("2026-08-12T07:00:00Z"))
+            .await
+            .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let err = drive_conflict_details_core(&pool, &app_dir, &drive)
+            .await
+            .expect_err("sem manifest remoto não há conflito para explicar");
+        assert!(err.contains("Nenhum conflito pendente"), "erro: {err}");
+
+        let state_after = state::load_or_init(&pool).await.unwrap();
+        assert!(
+            state_after.conflict_pending_since.is_none(),
+            "auto-cura: sem manifest remoto, a disputa anterior não se sustenta mais"
+        );
 
         std::fs::remove_dir_all(&app_dir).ok();
     }
@@ -1530,6 +1639,92 @@ mod tests {
         assert_eq!(
             state_after.last_checkin_device_id.as_deref(),
             Some(local.device_id.as_str())
+        );
+        assert!(
+            state_after.pending_publish_sequence.is_none(),
+            "a gravação local terminou — a sequência pretendida (issue #446 item 11a) não fica \
+             mais 'em andamento'"
+        );
+
+        std::fs::remove_dir_all(&app_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_keep_local_clears_the_pending_publish_sequence_when_the_upload_itself_fails() {
+        // A sequência PRETENDIDA (item 11a, issue #446) é gravada ANTES do upload; se o upload em
+        // si falhar, nada chegou a existir no Drive com aquela sequência — não há nada para a
+        // guarda de `checkout_on_open` reconciliar depois, então o valor volta a `None` em vez de
+        // ficar órfão.
+        let app_dir = test_app_dir();
+        let pool = test_pool(&app_dir).await;
+        let local = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            1,
+            "2026-08-11T10:00:00Z",
+            &local.device_id,
+            "seed-hash-nao-bate-com-export-real",
+        )
+        .await
+        .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 5,
+            created_at: "2026-08-12T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": []}"#)
+            .create_async()
+            .await;
+        // POST do binário falha — o mesmo sinal de rede fora do ar que faria `drive.upload_snapshot`
+        // devolver `Err` antes de tocar `record_checkin`.
+        server
+            .mock("POST", "/upload/drive/v3/files")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = resolve_conflict_keep_local_core(&pool, &app_dir, &drive, 5).await;
+        assert!(result.is_err(), "upload falho deve propagar erro");
+
+        let state_after = state::load_or_init(&pool).await.unwrap();
+        assert!(
+            state_after.pending_publish_sequence.is_none(),
+            "nada foi de fato publicado — a sequência pretendida não pode ficar órfã"
+        );
+        assert_eq!(
+            state_after.base_sequence, 1,
+            "upload falho não avança a base local"
         );
 
         std::fs::remove_dir_all(&app_dir).ok();

@@ -24,14 +24,16 @@ pub enum CheckoutOutcome {
         local_schema: i64,
         remote_schema: i64,
     },
-    /// O manifest remoto carrega o NOSSO PRÓPRIO `device_id` E `sequence == base_local + 1` — a
-    /// janela exata de um check-in que morreu entre o upload confirmado e a gravação do estado
-    /// local (ADR-0015). O conteúdo já é nosso; restaurar de verdade descartaria qualquer
-    /// trabalho feito depois daquele upload, então só a sequência-base local avança para alcançar
-    /// o remoto, sem baixar nem trocar arquivo. Fora dessa janela — mesmo com o mesmo `device_id`
-    /// — o manifest pode pertencer a outra instalação que compartilha identidade por um caminho
-    /// lateral (cópia manual da pasta do app, backup restaurado à mão sem passar pelo strip do
-    /// export), então o check-out segue o veredito normal do árbitro em vez de adotar às cegas.
+    /// O manifest remoto carrega o NOSSO PRÓPRIO `device_id` E `sequence` bate com
+    /// `pending_publish_sequence` (a sequência que ESTE aparelho gravou antes de subir a última
+    /// publicação) — a janela exata de um check-in que morreu entre o upload confirmado e a
+    /// gravação do estado local (ADR-0015). O conteúdo já é nosso; restaurar de verdade
+    /// descartaria qualquer trabalho feito depois daquele upload, então só a sequência-base local
+    /// avança para alcançar o remoto, sem baixar nem trocar arquivo. Fora dessa janela — mesmo com
+    /// o mesmo `device_id` — o manifest pode pertencer a outra instalação que compartilha
+    /// identidade por um caminho lateral (cópia manual da pasta do app, backup restaurado à mão
+    /// sem passar pelo strip do export), então o check-out segue o veredito normal do árbitro em
+    /// vez de adotar às cegas.
     CaughtUpOwnSequence { sequence: i64 },
 }
 
@@ -292,13 +294,20 @@ async fn prepare_restore(
     let remote_manifest =
         remote.expect("veredito Pull do árbitro implica manifest remoto presente");
 
-    // O remoto avançou com a NOSSA PRÓPRIA identidade E na sequência EXATA que um check-in morto
-    // deixaria (`base + 1`): publicamos aquele conteúdo nós mesmos — o upload confirmou, mas a
-    // gravação da base local morreu antes de terminar (queda de rede/processo entre as duas
-    // etapas). Restaurar de verdade baixaria e trocaria o banco ativo pelo NOSSO PRÓPRIO snapshot
-    // antigo, descartando qualquer gesto feito depois daquele upload — o conteúdo já é nosso, só
-    // a base local está atrasada. Nunca baixa nem troca arquivo neste ramo: só alcança a
-    // sequência remota.
+    // O remoto avançou com a NOSSA PRÓPRIA identidade E na sequência EXATA que publicamos por
+    // último (`pending_publish_sequence`, gravado ANTES do upload por `drive_checkin_core`/
+    // `resolve_conflict_keep_local_core`): publicamos aquele conteúdo nós mesmos — o upload
+    // confirmou, mas a gravação da base local morreu antes de terminar (queda de rede/processo
+    // entre as duas etapas). Restaurar de verdade baixaria e trocaria o banco ativo pelo NOSSO
+    // PRÓPRIO snapshot antigo, descartando qualquer gesto feito depois daquele upload — o
+    // conteúdo já é nosso, só a base local está atrasada. Nunca baixa nem troca arquivo neste
+    // ramo: só alcança a sequência remota.
+    //
+    // Comparar contra a sequência PRETENDIDA (em vez de inferir a janela por aritmética,
+    // `base + 1`) fecha a mesma guarda para QUALQUER publicação, não só o check-in normal: a
+    // resolução de conflito mantendo este aparelho (`resolve_conflict_keep_local_core`) publica
+    // `max(base + 1, remote + 1)`, que passa de `base + 1` sempre que a disputa já tinha avançado
+    // mais de um passo — a aritmética antiga nunca cobria essa porta.
     //
     // Qualquer OUTRA sequência com o mesmo `device_id` não entra aqui, mesmo que também seja
     // "nossa": duas instalações podem compartilhar identidade por um caminho lateral (cópia
@@ -308,7 +317,7 @@ async fn prepare_restore(
     // "Última leitura do Drive" e com a salvaguarda local), preservando a convergência entre
     // os dois.
     if remote_manifest.device_id == local_state.device_id
-        && remote_manifest.sequence == local_state.base_sequence + 1
+        && local_state.pending_publish_sequence == Some(remote_manifest.sequence)
     {
         // A escrita em si (`state::adopt_own_sequence`) fica para depois do teto de espera do
         // boot — ver o doc de `RestorePreparation`: nada em `prepare_restore` pode tocar `pool`.
@@ -640,8 +649,9 @@ pub const NEWER_SNAPSHOT_AVAILABLE_OUTCOME: &str = "newer_available";
 ///
 /// A mesma guarda estreita do próprio `device_id` de `checkout_on_open` se aplica aqui: quando o
 /// manifest remoto é o NOSSO check-in que morreu entre o upload confirmado e a gravação local
-/// (`remote.sequence == base + 1`), não é uma versão mais nova de OUTRO aparelho — é segura de
-/// adotar sem baixar nada, porque só atualiza bookkeeping local, nunca troca arquivo.
+/// (`remote.sequence` bate com `pending_publish_sequence`), não é uma versão mais nova de OUTRO
+/// aparelho — é segura de adotar sem baixar nada, porque só atualiza bookkeeping local, nunca
+/// troca arquivo.
 pub(crate) async fn probe_newer_snapshot_on_focus(
     pool: &SqlitePool,
     drive: &DriveSnapshotClient,
@@ -666,7 +676,7 @@ pub(crate) async fn probe_newer_snapshot_on_focus(
     let remote_manifest =
         remote.expect("veredito Pull do árbitro implica manifest remoto presente");
     if remote_manifest.device_id == local_state.device_id
-        && remote_manifest.sequence == local_state.base_sequence + 1
+        && local_state.pending_publish_sequence == Some(remote_manifest.sequence)
     {
         state::adopt_own_sequence(pool, remote_manifest.sequence).await?;
         return state::record_checkout_outcome(pool, None, None).await;
@@ -1426,16 +1436,18 @@ mod tests {
 
     #[tokio::test]
     async fn adopts_the_remote_sequence_without_restoring_when_the_manifest_is_our_own_device() {
-        // O remoto avançou (sequência acima da nossa base), mas com o NOSSO PRÓPRIO device_id —
-        // um check-in cujo upload confirmou mas cuja gravação local morreu antes de terminar.
-        // Restaurar de verdade baixaria e trocaria pelo NOSSO PRÓPRIO snapshot antigo, descartando
-        // qualquer gesto feito depois daquele upload. Nenhum mock de download é registrado: se o
-        // código tentasse baixar mesmo assim, a chamada não-mockada devolveria 501 e o teste
-        // acusaria a diferença.
+        // O remoto avançou (sequência acima da nossa base), mas com o NOSSO PRÓPRIO device_id E
+        // batendo com `pending_publish_sequence` — um check-in cujo upload confirmou mas cuja
+        // gravação local morreu antes de terminar (o valor sobrevive à queda, gravado ANTES do
+        // upload). Restaurar de verdade baixaria e trocaria pelo NOSSO PRÓPRIO snapshot antigo,
+        // descartando qualquer gesto feito depois daquele upload. Nenhum mock de download é
+        // registrado: se o código tentasse baixar mesmo assim, a chamada não-mockada devolveria
+        // 501 e o teste acusaria a diferença.
         let dir = test_dir();
         let db_path = dir.join("neko-finance.db");
         let pool = test_pool(&db_path).await;
         let local_before = state::load_or_init(&pool).await.unwrap();
+        state::record_pending_publish(&pool, Some(1)).await.unwrap();
         crate::commands::app_setting_set(
             &pool,
             "local_only_marker",
@@ -1496,19 +1508,108 @@ mod tests {
             state_after.last_checkout_at.is_none(),
             "nada foi de fato lido de outro aparelho — o eixo de check-out não muda"
         );
+        assert!(
+            state_after.pending_publish_sequence.is_none(),
+            "a publicação em andamento se resolveu — não fica órfã depois de adotada"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
-    async fn restores_normally_when_the_own_device_id_sequence_is_not_exactly_base_plus_one() {
+    async fn adopts_the_remote_sequence_past_base_plus_one_when_it_matches_the_pending_publish() {
+        // A resolução de conflito mantendo este aparelho (`resolve_conflict_keep_local_core`)
+        // publica `max(base + 1, remote + 1)`, que passa de `base + 1` sempre que a disputa já
+        // tinha avançado mais de um passo — a janela antiga (aritmética `base + 1`) nunca cobria
+        // esta porta (issue #446 item 11a). Comparar contra `pending_publish_sequence` cobre
+        // qualquer sequência pretendida, não só a primeira.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_before = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            5,
+            "2026-08-10T09:00:00Z",
+            &local_before.device_id,
+            "hash-publicado-antes",
+        )
+        .await
+        .unwrap();
+        // A resolução de conflito pretendia publicar em 8 (bem além de base(5) + 1 = 6) — gravado
+        // ANTES do upload, sobrevivendo à queda que impediu `record_checkin` de rodar.
+        state::record_pending_publish(&pool, Some(8)).await.unwrap();
+        crate::commands::app_setting_set(
+            &pool,
+            "local_only_marker",
+            "trabalho-posterior-a-resolucao-de-conflito",
+        )
+        .await
+        .unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: local_before.device_id.clone(),
+            sequence: 8,
+            created_at: "2026-08-13T10:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de download: se o código tentasse baixar mesmo assim, a chamada
+        // não-mockada devolveria 501 e o teste acusaria a diferença.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("adotar a própria sequência não é um erro");
+        assert_eq!(
+            result.outcome,
+            Ok(CheckoutOutcome::CaughtUpOwnSequence { sequence: 8 })
+        );
+
+        let marker = crate::commands::app_setting_get(&result.pool, "local_only_marker")
+            .await
+            .unwrap();
+        assert_eq!(
+            marker.as_deref(),
+            Some("trabalho-posterior-a-resolucao-de-conflito"),
+            "conteúdo local INTOCADO: nada foi baixado nem trocado"
+        );
+
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 8);
+        assert!(state_after.pending_publish_sequence.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn restores_normally_when_the_own_device_id_sequence_does_not_match_the_pending_publish()
+    {
         // Duas instalações podem compartilhar `device_id` por um caminho lateral (cópia manual
         // da pasta do app; backup local restaurado à mão, que não passa pelo `strip` do export) —
         // aí o manifest com o NOSSO id não é necessariamente o check-in morto entre upload e
         // gravação: pode ser o conteúdo de OUTRA instalação com a mesma identidade, várias
-        // sequências à frente. `remote.sequence == base + 1` é a única janela estreita o
-        // suficiente para presumir "sou eu mesmo, upload confirmado" — qualquer coisa além disso
-        // precisa passar pela restauração normal (com barulho visível), nunca ser adotada às
-        // cegas.
+        // sequências à frente. Bater com `pending_publish_sequence` (aqui `None`, nada publicado
+        // por ESTA instalação) é a única condição estreita o suficiente para presumir "sou eu
+        // mesmo, upload confirmado" — qualquer coisa além disso precisa passar pela restauração
+        // normal (com barulho visível), nunca ser adotada às cegas.
         let dir = test_dir();
         let db_path = dir.join("neko-finance.db");
         let pool = test_pool(&db_path).await;
@@ -1536,7 +1637,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let manifest_json = serde_json::to_string(&SnapshotManifest {
             device_id: local_before.device_id.clone(),
-            sequence: 8, // base(5) + 3: fora da janela upload→gravação (base + 1 = 6).
+            sequence: 8, // não bate com pending_publish_sequence (None) — nada publicado por esta instalação.
             created_at: "2026-08-12T08:00:00Z".into(),
             app_version: "0.2.1".into(),
             schema_version: local_schema,
@@ -1586,7 +1687,9 @@ mod tests {
             CheckoutOutcome::Restored { safeguard_path } => {
                 assert!(safeguard_path.is_some());
             }
-            other => panic!("esperava Restored (fora da janela base+1), veio {other:?}"),
+            other => {
+                panic!("esperava Restored (sem pending_publish_sequence batendo), veio {other:?}")
+            }
         }
 
         let marker = crate::commands::app_setting_get(&result.pool, "restore_marker")
@@ -1779,13 +1882,15 @@ mod tests {
 
     #[tokio::test]
     async fn focus_probe_adopts_own_sequence_silently_without_flagging_newer_available() {
-        // Mesma janela estreita de `checkout_on_open` (ADR-0015): o manifest remoto é o NOSSO
-        // check-in que morreu entre o upload confirmado e a gravação local — seguro adotar sem
-        // baixar nada, e não é "uma versão mais nova" de outro aparelho para avisar.
+        // Mesma guarda estreita de `checkout_on_open` (ADR-0015): o manifest remoto é o NOSSO
+        // check-in que morreu entre o upload confirmado e a gravação local (`pending_publish_sequence`
+        // batendo) — seguro adotar sem baixar nada, e não é "uma versão mais nova" de outro
+        // aparelho para avisar.
         let dir = test_dir();
         let db_path = dir.join("neko-finance.db");
         let pool = test_pool(&db_path).await;
         let local_before = state::load_or_init(&pool).await.unwrap();
+        state::record_pending_publish(&pool, Some(1)).await.unwrap();
 
         let mut server = mockito::Server::new_async().await;
         let manifest_json = serde_json::to_string(&SnapshotManifest {
@@ -1825,6 +1930,73 @@ mod tests {
             after.last_checkout_outcome.is_none(),
             "conteúdo já é nosso — não é aviso de versão mais nova de outro aparelho"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_adopts_own_sequence_past_base_plus_one_when_it_matches_the_pending_publish()
+     {
+        // Mesma regressão do item 11a (issue #446) provada em `checkout_on_open`
+        // (`adopts_the_remote_sequence_past_base_plus_one_when_it_matches_the_pending_publish`),
+        // agora na sonda de FOCO: `resolve_conflict_keep_local_core` publica além de `base + 1`, e
+        // a guarda por `pending_publish_sequence` precisa reconhecer isso nos DOIS pontos de
+        // entrada, não só no boot.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let local_before = state::load_or_init(&pool).await.unwrap();
+        state::record_checkin(
+            &pool,
+            5,
+            "2026-08-10T09:00:00Z",
+            &local_before.device_id,
+            "hash-publicado-antes",
+        )
+        .await
+        .unwrap();
+        state::record_pending_publish(&pool, Some(8)).await.unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: local_before.device_id.clone(),
+            sequence: 8,
+            created_at: "2026-08-13T09:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: 1,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        // Nenhum mock de download registrado: a sonda de foco nunca baixa nada, e se tentasse a
+        // chamada não-mockada devolveria 501 e o teste acusaria a diferença.
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        probe_newer_snapshot_on_focus(&pool, &drive)
+            .await
+            .expect("sonda de foco não deve falhar");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(after.base_sequence, 8, "a base alcança a própria sequência");
+        assert!(
+            after.last_checkout_outcome.is_none(),
+            "conteúdo já é nosso — não é aviso de versão mais nova de outro aparelho"
+        );
+        assert!(after.pending_publish_sequence.is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 

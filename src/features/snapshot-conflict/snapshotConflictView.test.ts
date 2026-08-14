@@ -65,14 +65,34 @@ describe("conflictGestureDatedLabel", () => {
 
 describe("conflictRemoteDeviceLabel", () => {
   it("identifica o outro aparelho pelos 8 primeiros caracteres do id", () => {
-    const label = conflictRemoteDeviceLabel({
-      device_id: "abcdef12-3456-7890-abcd-ef1234567890",
-      sequence: 5,
-      created_at: "2026-08-12T09:00:00Z",
-      app_version: "0.2.1",
-      schema_version: 1,
-    });
-    expect(label).toBe("outro aparelho (abcdef12)");
+    const label = conflictRemoteDeviceLabel(
+      {
+        device_id: "abcdef12-3456-7890-abcd-ef1234567890",
+        sequence: 5,
+        created_at: "2026-08-12T09:00:00Z",
+        app_version: "0.2.1",
+        schema_version: 1,
+      },
+      "aparelho-deste-dono",
+    );
+    expect(label).toBe("de outro aparelho (abcdef12)");
+  });
+
+  it("reconhece o PRÓPRIO id em vez de cravar 'outro aparelho' (issue #446 item 11b)", () => {
+    // Cenário do check-in morto: a resolução de conflito de uma sessão anterior publicou, mas a
+    // gravação local morreu antes de terminar — o manifest que esta tela busca a seguir pode ser
+    // a NOSSA PRÓPRIA publicação, nunca de fato "outro aparelho".
+    const label = conflictRemoteDeviceLabel(
+      {
+        device_id: "aparelho-deste-dono",
+        sequence: 6,
+        created_at: "2026-08-12T09:00:00Z",
+        app_version: "0.2.1",
+        schema_version: 1,
+      },
+      "aparelho-deste-dono",
+    );
+    expect(label).toBe("deste aparelho");
   });
 });
 

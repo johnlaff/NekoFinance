@@ -21,52 +21,35 @@ pub struct ConflictGesture {
     pub source_sheet: Option<String>,
 }
 
-/// A base em comum entre os dois aparelhos não tem uma coluna própria em `snapshot_state` — é
-/// aproximada pelo timestamp mais recente entre o último check-in e o último check-out DESTE
-/// aparelho, os dois únicos gestos que avançam `base_sequence`. `adopt_own_sequence` (o check-in
-/// que morreu entre o upload confirmado e a gravação local) é a única exceção: avança a base sem
-/// tocar nenhum dos dois timestamps, então a âncora fica um pouco mais ANTIGA que a base real
-/// nesse caso raro — a lista de gestos vem levemente mais generosa (inclui alguns gestos já
-/// publicados por este mesmo aparelho), nunca mais estreita a ponto de esconder um gesto de fato
-/// em risco. Comparação lexicográfica: os dois produtores em produção usam
-/// `chrono::Utc::now().to_rfc3339()`, cuja ordem textual já é a ordem cronológica.
-pub(crate) fn base_anchor(
-    last_checkin_at: Option<&str>,
-    last_checkout_at: Option<&str>,
-) -> Option<String> {
-    match (last_checkin_at, last_checkout_at) {
-        (None, None) => None,
-        (Some(a), None) => Some(a.to_string()),
-        (None, Some(b)) => Some(b.to_string()),
-        (Some(a), Some(b)) => Some(if a >= b { a.to_string() } else { b.to_string() }),
-    }
-}
-
-/// Gestos do `sync_log` deste aparelho desde `since` (exclusive), em ordem cronológica —
-/// `since: None` devolve TODOS (primeira base deste aparelho, nada a excluir ainda).
+/// Gestos do `sync_log` deste aparelho desde `since` (exclusive), em ordem de inserção — `since:
+/// None` devolve TODOS (primeira base deste aparelho, nada a excluir ainda).
 ///
-/// A comparação normaliza os dois lados com `datetime()` do SQLite em vez de comparar as strings
-/// cruas: `sync_log.timestamp` vem de `datetime('now')` ("YYYY-MM-DD HH:MM:SS", espaço) enquanto
-/// `since` costuma vir de `chrono::Utc::now().to_rfc3339()` ("...T...+00:00"). Comparar os
-/// literais byte a byte falharia sempre (o espaço de um vem ANTES do "T" do outro na tabela
-/// ASCII, então toda linha do mesmo dia pareceria mais antiga que qualquer âncora RFC3339,
-/// mesmo quando não é) — `datetime()` entende os dois formatos e normaliza antes de comparar.
+/// Corte por SEQUÊNCIA (`sync_log.seq`), nunca por timestamp (ADR-0015, issue #446 D3 do PR #447):
+/// a versão anterior comparava `sync_log.timestamp` do OUTRO aparelho contra uma âncora derivada
+/// do relógio DESTE — um relógio remoto atrasado escondia gestos recentes dele, e a lista ficava
+/// mais estreita que a verdade. `seq` é um contador monotônico gravado NA LINHA (nunca o rowid
+/// implícito do SQLite, que `VACUUM INTO` pode renumerar para tabelas sem `INTEGER PRIMARY KEY` —
+/// `sync_log.id` é `TEXT`, o rowid não é estável através do export) — sobrevive intacto ao
+/// `VACUUM INTO`/download porque é um valor de COLUNA. `since` vem de
+/// `SnapshotState::base_sync_log_seq`, capturado como `MAX(seq)` no momento em que os dois
+/// aparelhos eram bytes idênticos (o último sync) — o MESMO valor, com o MESMO significado, nos
+/// dois lados, sem depender de qual relógio está certo.
 pub(crate) async fn gestures_since(
     pool: &SqlitePool,
-    since: Option<&str>,
+    since: Option<i64>,
 ) -> Result<Vec<ConflictGesture>, String> {
     let rows: Vec<(String, String, String, Option<String>)> = match since {
-        Some(ts) => sqlx::query_as(
+        Some(seq) => sqlx::query_as(
             "SELECT timestamp, event_type, entity_type, source_sheet FROM sync_log \
-             WHERE datetime(timestamp) > datetime(?1) ORDER BY datetime(timestamp) ASC",
+             WHERE seq > ?1 ORDER BY seq ASC",
         )
-        .bind(ts)
+        .bind(seq)
         .fetch_all(pool)
         .await
         .map_err(|e| format!("ler gestos do sync_log: {e}"))?,
         None => sqlx::query_as(
             "SELECT timestamp, event_type, entity_type, source_sheet FROM sync_log \
-             ORDER BY datetime(timestamp) ASC",
+             ORDER BY seq ASC",
         )
         .fetch_all(pool)
         .await
@@ -93,7 +76,7 @@ pub(crate) async fn gestures_since(
 /// outro aparelho, em `resolve_conflict_use_remote_core`.
 pub(crate) async fn gestures_since_in_file(
     path: &Path,
-    since: Option<&str>,
+    since: Option<i64>,
 ) -> Result<Vec<ConflictGesture>, String> {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
@@ -175,50 +158,8 @@ mod tests {
         .expect("semear gesto");
     }
 
-    #[test]
-    fn base_anchor_picks_the_later_of_checkin_and_checkout_or_none_when_neither_exists() {
-        for (label, checkin, checkout, expected) in [
-            (
-                "nenhum dos dois: aparelho nunca sincronizou",
-                None,
-                None,
-                None,
-            ),
-            (
-                "só check-in: aparelho que só publicou",
-                Some("2026-08-11T10:00:00Z"),
-                None,
-                Some("2026-08-11T10:00:00Z"),
-            ),
-            (
-                "só check-out: aparelho que só puxou",
-                None,
-                Some("2026-08-11T10:00:00Z"),
-                Some("2026-08-11T10:00:00Z"),
-            ),
-            (
-                "check-in mais recente que o check-out",
-                Some("2026-08-12T09:00:00Z"),
-                Some("2026-08-10T09:00:00Z"),
-                Some("2026-08-12T09:00:00Z"),
-            ),
-            (
-                "check-out mais recente que o check-in",
-                Some("2026-08-10T09:00:00Z"),
-                Some("2026-08-12T09:00:00Z"),
-                Some("2026-08-12T09:00:00Z"),
-            ),
-        ] {
-            assert_eq!(
-                base_anchor(checkin, checkout),
-                expected.map(str::to_string),
-                "caso: {label}"
-            );
-        }
-    }
-
     #[tokio::test]
-    async fn gestures_since_none_returns_every_gesture_in_chronological_order() {
+    async fn gestures_since_none_returns_every_gesture_in_insertion_order() {
         let pool = single_connection_pool().await;
         let profile_id = seed_profile(&pool).await;
         seed_gesture(
@@ -242,15 +183,16 @@ mod tests {
 
         let gestures = gestures_since(&pool, None).await.expect("gestures_since");
         assert_eq!(gestures.len(), 2);
-        // Ordem cronológica, não ordem de inserção: o import (11) vem antes do write-back (12).
-        assert_eq!(gestures[0].event_type, "import");
-        assert_eq!(gestures[0].source_sheet.as_deref(), Some("Diário"));
-        assert_eq!(gestures[1].event_type, "write_back");
-        assert_eq!(gestures[1].source_sheet.as_deref(), Some("Saídas"));
+        // Ordem de INSERÇÃO (`seq`, o gatilho `sync_log_assign_seq`), não ordem cronológica do
+        // `timestamp`: o write-back foi inserido primeiro (mesmo com timestamp mais recente).
+        assert_eq!(gestures[0].event_type, "write_back");
+        assert_eq!(gestures[0].source_sheet.as_deref(), Some("Saídas"));
+        assert_eq!(gestures[1].event_type, "import");
+        assert_eq!(gestures[1].source_sheet.as_deref(), Some("Diário"));
     }
 
     #[tokio::test]
-    async fn gestures_since_some_excludes_gestures_at_or_before_the_anchor() {
+    async fn gestures_since_some_excludes_gestures_at_or_before_the_anchor_sequence() {
         let pool = single_connection_pool().await;
         let profile_id = seed_profile(&pool).await;
         seed_gesture(
@@ -272,40 +214,55 @@ mod tests {
         )
         .await;
 
-        let gestures = gestures_since(&pool, Some("2026-08-11 09:00:00"))
+        // O import acima foi o PRIMEIRO gesto inserido — o gatilho `sync_log_assign_seq` deu a
+        // ele `seq = 1`. A âncora `Some(1)` é "a base ficou exatamente no ponto do import".
+        let gestures = gestures_since(&pool, Some(1))
             .await
             .expect("gestures_since");
-        assert_eq!(gestures.len(), 1, "gesto NO instante da âncora não conta");
+        assert_eq!(gestures.len(), 1, "gesto NA sequência da âncora não conta");
         assert_eq!(gestures[0].event_type, "write_back");
     }
 
     #[tokio::test]
-    async fn gestures_since_normalizes_the_two_timestamp_formats_the_producers_actually_emit() {
-        // `sync_log.timestamp` sai de `datetime('now')` (espaço); a âncora real (`base_anchor`)
-        // sai de `chrono::Utc::now().to_rfc3339()` ("T" + offset). Comparar os literais crus
-        // falharia SEMPRE para uma linha do mesmo dia (o espaço vem antes do "T" na tabela
-        // ASCII) — esta é a regressão que `datetime()` na query evita.
+    async fn gestures_since_never_hides_a_gesture_because_the_remote_clock_lags() {
+        // A regressão que a âncora por sequência existe para fechar (ADR-0015, issue #446 D3 do
+        // PR #447): um gesto com `timestamp` ANTERIOR à âncora (relógio do OUTRO aparelho
+        // atrasado) precisa continuar visível se foi inserido DEPOIS do ponto de base — o corte
+        // por `seq` nunca lê o valor de `timestamp` para decidir inclusão, só a ordem real de
+        // inserção.
         let pool = single_connection_pool().await;
         let profile_id = seed_profile(&pool).await;
         seed_gesture(
             &pool,
             &profile_id,
             "2026-08-12 10:00:00",
+            "import",
+            "transaction",
+            None,
+        )
+        .await; // seq = 1: este é o ponto de base.
+        seed_gesture(
+            &pool,
+            &profile_id,
+            // Timestamp ANTERIOR ao da base acima — um relógio remoto atrasado geraria isto na
+            // prática. Um corte por `datetime(timestamp)` esconderia esta linha; o corte por
+            // `seq` não.
+            "2026-08-10 08:00:00",
             "write_back",
             "transaction",
             None,
         )
-        .await;
+        .await; // seq = 2: inserido DEPOIS da base, mesmo com timestamp mais antigo.
 
-        let gestures = gestures_since(&pool, Some("2026-08-12T09:00:00.000000+00:00"))
+        let gestures = gestures_since(&pool, Some(1))
             .await
             .expect("gestures_since");
         assert_eq!(
             gestures.len(),
             1,
-            "a linha das 10h deve contar como POSTERIOR à âncora das 9h, apesar dos formatos \
-             diferentes"
+            "o gesto pós-base aparece mesmo com timestamp mais antigo que a âncora"
         );
+        assert_eq!(gestures[0].event_type, "write_back");
     }
 
     #[tokio::test]

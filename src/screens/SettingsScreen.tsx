@@ -934,7 +934,11 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
           <>
             {driveCheckoutLabel(info)}{" "}
             {checkoutWarning ? (
-              <strong role="alert" className="config__err">
+              // Estado passivo recuperável (o app tenta de novo sozinho, ou pede um gesto do
+              // dono sem urgência), não erro de um clique: `role="status"` só anuncia ao leitor
+              // de tela quando o texto muda, em vez de interromper a cada visita à tela (mesma
+              // correção que a nota "em dia" recebeu no PR #439).
+              <strong role="status" className="config__warn">
                 {checkoutWarning}
               </strong>
             ) : null}

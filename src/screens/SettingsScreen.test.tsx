@@ -765,9 +765,12 @@ describe("DriveCheckinLine — check-in do snapshot no Drive", () => {
     });
     renderSettings();
 
-    expect(
-      await screen.findByText(/versão mais nova do Neko Finance/i),
-    ).toBeInTheDocument();
+    const warning = await screen.findByText(/versão mais nova do Neko Finance/i);
+    expect(warning).toBeInTheDocument();
+    // Estado passivo recuperável, não erro de clique: `role="status"` anuncia sem interromper o
+    // leitor de tela a cada visita (regressão do item 6, issue #446 — antes era role="alert").
+    expect(warning).toHaveAttribute("role", "status");
+    expect(warning.className).toContain("config__warn");
   });
 
   it("falha de rede/integridade no check-out: avisa que a leitura não aconteceu", async () => {

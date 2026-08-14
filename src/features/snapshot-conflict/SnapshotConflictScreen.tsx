@@ -150,6 +150,12 @@ type Phase =
 export function SnapshotConflictScreen() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const cardRef = useRef<HTMLDivElement>(null);
+  // Compartilhado pelas DUAS chamadas de `loadDetails` (mount E recuperação de consentimento
+  // obsoleto) — um guard por closure sempre-`true` na segunda chamada seria assimétrico do mount
+  // e convidaria um bug silencioso se um caminho de fechamento novo surgisse ali (issue #446 item
+  // 9a). `mountedRef.current = true` dentro do efeito (não só a inicialização do `useRef`) cobre
+  // o mount→cleanup→mount duplo do StrictMode em dev.
+  const mountedRef = useRef(true);
 
   // Extraída de propósito: o mount inicial E a recuperação de um consentimento obsoleto (veredito
   // `CHECKIN_REFUSED_STALE_CONFLICT` abaixo) precisam do MESMO fetch fresco — o dono nunca decide
@@ -157,26 +163,27 @@ export function SnapshotConflictScreen() {
   // aqui dentro (regra `react-hooks/set-state-in-effect`): o mount já parte de `{ kind: "loading" }`
   // pelo estado inicial do `useState`, e o chamador de recuperação (dentro de `resolve`, um
   // manipulador de evento, não um efeito) seta a fase ANTES de invocar isto.
-  function loadDetails(alive: () => boolean, staleNotice?: string) {
+  function loadDetails(staleNotice?: string) {
     fetchSnapshotConflictDetails(GOOGLE_CLIENT_ID)
       .then((details) => {
         // `exactOptionalPropertyTypes` distingue "propriedade ausente" de "propriedade
         // presente com valor `undefined`" — o spread condicional constrói o objeto sem a chave
         // quando não há nota, em vez de atribuir `staleNotice: undefined` explicitamente.
-        if (alive()) {
+        if (mountedRef.current) {
           setPhase({ kind: "ready", details, ...(staleNotice ? { staleNotice } : {}) });
         }
       })
       .catch((e: unknown) => {
-        if (alive()) setPhase({ kind: "load-error", message: safeErrorMessage(e) });
+        if (mountedRef.current)
+          setPhase({ kind: "load-error", message: safeErrorMessage(e) });
       });
   }
 
   useEffect(() => {
-    let alive = true;
-    loadDetails(() => alive);
+    mountedRef.current = true;
+    loadDetails();
     return () => {
-      alive = false;
+      mountedRef.current = false;
     };
   }, []);
 
@@ -208,7 +215,7 @@ export function SnapshotConflictScreen() {
         // os detalhes em vez de mostrar um erro parado, com uma nota visível: sem ela, o dono
         // clica, vê o spinner e a tela volta com listas diferentes sem uma palavra.
         setPhase({ kind: "loading" });
-        loadDetails(() => true, STALE_CONFLICT_RELOADED_NOTICE);
+        loadDetails(STALE_CONFLICT_RELOADED_NOTICE);
         return;
       }
       if (isAfterPoolClosedError(e)) {
@@ -318,10 +325,14 @@ export function SnapshotConflictScreen() {
               role="status"
               style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text)" }}
             >
-              Isto é {conflictRemoteDeviceLabel(details.remote_manifest)}. As listas
-              abaixo cobrem só importações e escritas na planilha — split, tag,
-              reembolso, fatura, teto e cenário ainda não ficam registrados aqui. Os
-              horários do lado do outro aparelho vêm do relógio dele, não deste.
+              Isto é{" "}
+              {conflictRemoteDeviceLabel(
+                details.remote_manifest,
+                details.this_device_id,
+              )}
+              . As listas abaixo cobrem só importações e escritas na planilha — split,
+              tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui.
+              Os horários do lado do outro aparelho vêm do relógio dele, não deste.
             </p>
 
             <GestureList

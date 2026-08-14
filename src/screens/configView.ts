@@ -158,10 +158,12 @@ export function driveCheckinLabel(
 /**
  * Rótulo do último check-out (a leitura do snapshot remoto ao abrir o app): recência + de qual
  * aparelho veio. Espelha `driveCheckinLabel` no mesmo padrão ("deste aparelho" / "de outro
- * aparelho (nome)") comparando `last_checkout_device_id` a `this_device_id` — o backend nunca
- * deveria registrar o check-out do PRÓPRIO snapshot (o veredito `Pull` do árbitro exige avanço de
- * OUTRO aparelho), mas a tela não pode assumir essa invariante silenciosamente e cravar "outro
- * aparelho" quando os dois ids batem.
+ * aparelho (nome)") comparando `last_checkout_device_id` a `this_device_id` — o árbitro puro
+ * (`lease::decide`, Rust) ignora `device_id` por completo, então nada no veredito `Pull` garante
+ * que o manifest seja de OUTRO aparelho; é a guarda de `checkout_on_open` (comparação contra
+ * `pending_publish_sequence`, a sequência PRETENDIDA gravada antes do upload — ADR-0015, issue
+ * #446) que evita registrar um check-out do PRÓPRIO snapshot. A tela não pode assumir essa
+ * invariante silenciosamente e cravar "outro aparelho" quando os dois ids batem.
  */
 export function driveCheckoutLabel(
   info: DriveCheckinInfo | null | undefined,

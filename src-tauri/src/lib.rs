@@ -349,6 +349,16 @@ pub fn run() {
                             return;
                         }
                         api.prevent_close();
+                        // Esconde JÁ, antes do check-in de até `CLOSE_CHECKIN_TIMEOUT_SECS`
+                        // rodar em segundo plano (issue #446 item 10c): sem isto, clicar em
+                        // fechar deixava a janela parada e visível em silêncio por até 5s antes
+                        // do `window.close()` de verdade — teto correto, mas indescobrível para
+                        // o dono, que não sabe se o clique registrou. Esconder dá o mesmo
+                        // feedback instantâneo de qualquer outro app (a janela some na hora); o
+                        // processo só termina de verdade depois do check-in tentar.
+                        if let Err(e) = window_close.hide() {
+                            eprintln!("[snapshot/checkin:close] falha ao esconder a janela: {e}");
+                        }
                         let pool = pool_close.clone();
                         let app_dir = app_dir_close.clone();
                         let guard = guard_close.clone();
