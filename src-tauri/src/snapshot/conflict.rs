@@ -266,6 +266,160 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gestures_since_includes_a_gesture_inserted_after_a_delete_shrank_the_running_max() {
+        // Regressão da revisão adversarial do PR #459 (issue #446): o corte por sequência só
+        // funciona se `seq` NUNCA reusar um valor já emitido, mas o `sync_log` TEM deleções em
+        // produção (diff-delete do re-import, `google_sheets/import/mod.rs`; delete manual de
+        // transação, `commands/transactions.rs`). Um gerador ingênuo (`MAX(seq)+1 FROM sync_log`
+        // a cada insert) recua quando as linhas de maior `seq` somem — o próximo insert reusa um
+        // número já visto.
+        //
+        // Cenário exato da revisão: a base fica ancorada em `seq = 5` (os dois aparelhos eram
+        // bytes idênticos ali). Um delete derruba o `MAX(seq)` corrente do `sync_log` para 2. O
+        // gesto inserido DEPOIS da base receberia `seq = 3` — abaixo da âncora — e a lista de
+        // conflito o omitiria, quando deveria aparecer: a tela voltaria a mentir por omissão.
+        let pool = single_connection_pool().await;
+        let profile_id = seed_profile(&pool).await;
+
+        for i in 1..=5u32 {
+            seed_gesture(
+                &pool,
+                &profile_id,
+                &format!("2026-08-0{i} 09:00:00"),
+                "import",
+                "transaction",
+                None,
+            )
+            .await;
+        }
+        let (base_anchor,): (i64,) = sqlx::query_as("SELECT MAX(seq) FROM sync_log")
+            .fetch_one(&pool)
+            .await
+            .expect("MAX(seq) antes do delete");
+        assert_eq!(
+            base_anchor, 5,
+            "base ancorada no maior seq emitido até aqui"
+        );
+
+        // Mesmo efeito do diff-delete de import ou do delete manual de transação: o sync_log
+        // encolhe, e as linhas de maior seq (3, 4, 5) somem.
+        sqlx::query("DELETE FROM sync_log WHERE seq > 2")
+            .execute(&pool)
+            .await
+            .expect("delete que encolhe o sync_log");
+
+        // Gesto pós-base: precisa ficar acima da âncora, nunca reusar um número já emitido.
+        seed_gesture(
+            &pool,
+            &profile_id,
+            "2026-08-06 09:00:00",
+            "write_back",
+            "transaction",
+            None,
+        )
+        .await;
+
+        let gestures = gestures_since(&pool, Some(base_anchor))
+            .await
+            .expect("gestures_since");
+        assert_eq!(
+            gestures.len(),
+            1,
+            "o gesto pós-base some da lista de conflito se o seq for reusado abaixo da âncora"
+        );
+        assert_eq!(gestures[0].event_type, "write_back");
+    }
+
+    #[tokio::test]
+    async fn restoring_a_vacuum_into_snapshot_keeps_the_sync_log_seq_watermark_monotonic() {
+        // Round-trip do mesmo defeito (issue #446): o snapshot viaja por `VACUUM INTO`/download e
+        // é restaurado NO OUTRO aparelho — a fonte da monotonicidade do gerador de `sync_log.seq`
+        // precisa viajar JUNTO com o arquivo, senão o aparelho restaurado reconta do zero e reusa
+        // números já vistos no aparelho de origem.
+        //
+        // Origem PRECISA ser um arquivo real, nunca `sqlite::memory:` (`VACUUM INTO` exige o
+        // caminho completo de I/O de arquivo do SQLite para gravar o destino).
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let dir =
+            std::env::temp_dir().join(format!("neko-conflict-vacuum-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("origin.db");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", src.display()))
+                    .unwrap()
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("abrir banco de origem");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrações");
+        let profile_id = seed_profile(&pool).await;
+
+        for i in 1..=5u32 {
+            seed_gesture(
+                &pool,
+                &profile_id,
+                &format!("2026-08-0{i} 09:00:00"),
+                "import",
+                "transaction",
+                None,
+            )
+            .await;
+        }
+        // Deixa o watermark ACIMA do que qualquer linha remanescente mostra — o mesmo efeito do
+        // diff-delete de import ou do delete manual de transação.
+        sqlx::query("DELETE FROM sync_log WHERE seq > 2")
+            .execute(&pool)
+            .await
+            .expect("delete que encolhe o sync_log");
+
+        let dest = dir.join("restored.db");
+        crate::commands::db_export::vacuum_into_atomic(&pool, &dest)
+            .await
+            .expect("vacuum into");
+        pool.close().await;
+
+        // Reabre o arquivo exportado como o APARELHO RESTAURADO abriria o download — conexão de
+        // escrita normal, o mesmo perfil que `checkout::restore` usa depois de baixar o snapshot.
+        let restored_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str(&format!("sqlite:{}", dest.display())).unwrap(),
+            )
+            .await
+            .expect("abrir snapshot restaurado");
+
+        seed_gesture(
+            &restored_pool,
+            &profile_id,
+            "2026-08-07 09:00:00",
+            "write_back",
+            "transaction",
+            None,
+        )
+        .await;
+
+        let (new_seq,): (i64,) =
+            sqlx::query_as("SELECT seq FROM sync_log ORDER BY seq DESC LIMIT 1")
+                .fetch_one(&restored_pool)
+                .await
+                .expect("seq do gesto inserido no aparelho restaurado");
+        assert!(
+            new_seq > 5,
+            "o watermark sobrevive ao VACUUM INTO: o aparelho restaurado continua a contagem \
+             em vez de reusar um número já visto na origem (seq = {new_seq})"
+        );
+
+        restored_pool.close().await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
     async fn gestures_since_empty_log_returns_an_empty_list_never_an_error() {
         let pool = single_connection_pool().await;
         let gestures = gestures_since(&pool, None).await.expect("gestures_since");
