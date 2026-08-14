@@ -4,6 +4,30 @@ All notable changes to Neko Finance are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), entries are written
 for humans, and versions follow [SemVer](https://semver.org/).
 
+## [0.4.0](https://github.com/johnlaff/NekoFinance/compare/v0.3.0...v0.4.0) (2026-08-14)
+
+
+### Features
+
+* adiciona o check-out do snapshot no Drive ao abrir o app, com restauração atômica ([#443](https://github.com/johnlaff/NekoFinance/issues/443)) ([3676994](https://github.com/johnlaff/NekoFinance/commit/3676994255e3c0b794e0982c152f42a18d8655f7))
+* **android:** adiciona o target Android e aprova o gate sensorial do spike (spec 042) ([#440](https://github.com/johnlaff/NekoFinance/issues/440)) ([d83b154](https://github.com/johnlaff/NekoFinance/commit/d83b154d43bf59d0580da09c7b57eced95085bf5))
+* **android:** instala o app de produção com as onze telas no aparelho ([#441](https://github.com/johnlaff/NekoFinance/issues/441)) ([5ad3af6](https://github.com/johnlaff/NekoFinance/commit/5ad3af6191175887ca89b7ea22ac17cadd26f45f))
+* liga os gatilhos automáticos de check-in e check-out do snapshot no Drive ([#449](https://github.com/johnlaff/NekoFinance/issues/449)) ([df829ad](https://github.com/johnlaff/NekoFinance/commit/df829adcd2c5b33dfe263abed72eaea4300d4398))
+* primeiro check-in manual do snapshot no Drive, com manifest e lease ([#439](https://github.com/johnlaff/NekoFinance/issues/439)) ([71aaff1](https://github.com/johnlaff/NekoFinance/commit/71aaff18532577a46eaa84e6f7b9700e0f521ea7))
+* resolve conflito de sincronização entre aparelhos com os gestos dos dois lados antes da escolha ([#447](https://github.com/johnlaff/NekoFinance/issues/447)) ([b679a38](https://github.com/johnlaff/NekoFinance/commit/b679a38230d06121823095e811ab4d3f71130e8e))
+
+
+### Bug Fixes
+
+* ancora o release train no commit da release 0.2.0 (bootstrap-sha) ([#396](https://github.com/johnlaff/NekoFinance/issues/396)) ([d9dc92e](https://github.com/johnlaff/NekoFinance/commit/d9dc92e1e9a8c57d853c6e4510c6e8464941416e))
+* **android:** corrige o crash de abertura e verifica a Mia no aparelho real ([#445](https://github.com/johnlaff/NekoFinance/issues/445)) ([e24fbdb](https://github.com/johnlaff/NekoFinance/commit/e24fbdb91cf4b63678eb5e63a0b45f7aa344b08a))
+* cobre o refresh do token OAuth pelo mesmo teto de espera do check-out no boot ([#461](https://github.com/johnlaff/NekoFinance/issues/461)) ([250bf3b](https://github.com/johnlaff/NekoFinance/commit/250bf3bed2c4e8f1d857e821a5534a0e7d354cbf)), closes [#460](https://github.com/johnlaff/NekoFinance/issues/460)
+* draft sem tag e dispatch explícito do build no release train ([#394](https://github.com/johnlaff/NekoFinance/issues/394)) ([3ac44a2](https://github.com/johnlaff/NekoFinance/commit/3ac44a2f73af865d3ca5e9e349f5264b299d94f4))
+* estreita a guarda do próprio device_id no check-out para a janela base+1 ([#448](https://github.com/johnlaff/NekoFinance/issues/448)) ([cf22a7e](https://github.com/johnlaff/NekoFinance/commit/cf22a7e658a738e9b6be6a4b63dc4e8bb23d324d))
+* fecha follow-ups pendentes do snapshot no Drive (issue [#446](https://github.com/johnlaff/NekoFinance/issues/446)) ([#459](https://github.com/johnlaff/NekoFinance/issues/459)) ([2d31963](https://github.com/johnlaff/NekoFinance/commit/2d319634c5bbfbb55e46b4741534c7b832684775))
+* neutraliza o realce de toque do Android e ajusta a copy de fechar do InfoPopover por ambiente ([#437](https://github.com/johnlaff/NekoFinance/issues/437)) ([207cad1](https://github.com/johnlaff/NekoFinance/commit/207cad1080b9829651e184d07951254b950d9d94))
+* robustece o check-out do snapshot no boot contra rede lenta e reabertura falha ([#452](https://github.com/johnlaff/NekoFinance/issues/452)) ([28ff444](https://github.com/johnlaff/NekoFinance/commit/28ff4441f94c5359516b3f6249383c9c31f35182))
+
 ## [0.3.0](https://github.com/johnlaff/NekoFinance/compare/v0.2.1...v0.3.0) (2026-08-14)
 
 
