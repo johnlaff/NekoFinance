@@ -148,10 +148,22 @@ pub fn is_token_expired(token: &StoredToken) -> bool {
     token.expires_at <= now
 }
 
-pub async fn refresh_access_token(
+/// A URL real do endpoint de refresh do Google. Injetável nos testes — mesmo padrão de
+/// `snapshot::transport::production_base_url` — para simular rede pendurada (`TcpListener` que
+/// aceita e nunca responde) sem tocar a rede de verdade.
+pub fn production_token_url() -> &'static str {
+    "https://oauth2.googleapis.com/token"
+}
+
+/// Renova o token de acesso via `refresh_token`, contra `token_url` (`production_token_url` em
+/// produção, injetável nos testes) — usado pelo check-out do boot (`snapshot::checkout`) para
+/// provar que uma rede pendurada NO REFRESH é abandonada pelo mesmo teto de espera que já cobre o
+/// resto do check-out.
+pub(crate) async fn refresh_access_token_at(
     app_dir: &std::path::Path,
     client_id: &str,
     client_secret: Option<&str>,
+    token_url: &str,
 ) -> Result<StoredToken, String> {
     let token = load_token(app_dir)?.ok_or("no token to refresh".to_string())?;
 
@@ -168,13 +180,9 @@ pub async fn refresh_access_token(
         params.push(("client_secret", secret.to_string()));
     }
 
-    let resp = crate::http::send_with_retry(
-        crate::http::client()
-            .post("https://oauth2.googleapis.com/token")
-            .form(&params),
-    )
-    .await
-    .map_err(|e| format!("refresh request: {e}"))?;
+    let resp = crate::http::send_with_retry(crate::http::client().post(token_url).form(&params))
+        .await
+        .map_err(|e| format!("refresh request: {e}"))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -222,13 +230,23 @@ pub async fn ensure_valid_token(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
+    ensure_valid_token_at(app_dir, client_id, client_secret, production_token_url()).await
+}
+
+/// Núcleo testável de [`ensure_valid_token`], com o endpoint de refresh injetável.
+pub(crate) async fn ensure_valid_token_at(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<&str>,
+    token_url: &str,
+) -> Result<StoredToken, String> {
     let token = load_token(app_dir)?.ok_or("not authenticated".to_string())?;
 
     if !is_token_expired(&token) {
         return Ok(token);
     }
 
-    refresh_access_token(app_dir, client_id, client_secret).await
+    refresh_access_token_at(app_dir, client_id, client_secret, token_url).await
 }
 
 /// O escopo concedido (gravado no token na troca, ver `oauth::mod`) inclui `required`? O Google
@@ -241,16 +259,18 @@ fn scope_grants(granted_scope: &str, required: &str) -> bool {
 }
 
 /// Garante que o token armazenado satisfaz `grants` (`scope_grants_write`/`scope_grants_drive_appdata`).
-/// Reusa `ensure_valid_token` (refresh se expirado) e então valida o escopo concedido; em falta de
-/// escopo, devolve `needs_reauth_msg` em vez de propagar o 403 cru do provedor.
-async fn ensure_scope(
+/// Reusa `ensure_valid_token_at` (refresh se expirado, endpoint injetável) e então valida o escopo
+/// concedido; em falta de escopo, devolve `needs_reauth_msg` em vez de propagar o 403 cru do
+/// provedor.
+async fn ensure_scope_at(
     app_dir: &std::path::Path,
     client_id: &str,
     client_secret: Option<&str>,
+    token_url: &str,
     grants: impl Fn(&str) -> bool,
     needs_reauth_msg: &str,
 ) -> Result<StoredToken, String> {
-    let token = ensure_valid_token(app_dir, client_id, client_secret).await?;
+    let token = ensure_valid_token_at(app_dir, client_id, client_secret, token_url).await?;
     if !grants(&token.scope) {
         return Err(needs_reauth_msg.to_string());
     }
@@ -276,10 +296,11 @@ pub async fn ensure_write_scope(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
-    ensure_scope(
+    ensure_scope_at(
         app_dir,
         client_id,
         client_secret,
+        production_token_url(),
         scope_grants_write,
         NEEDS_WRITE_REAUTH,
     )
@@ -306,10 +327,23 @@ pub async fn ensure_drive_scope(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<StoredToken, String> {
-    ensure_scope(
+    ensure_drive_scope_at(app_dir, client_id, client_secret, production_token_url()).await
+}
+
+/// Núcleo testável de [`ensure_drive_scope`], com o endpoint de refresh injetável — usado pelo
+/// check-out do boot (`snapshot::checkout::resolve_drive_client_best_effort_at`) para cobrir o
+/// refresh do token sob o mesmo teto de espera que o resto do check-out.
+pub(crate) async fn ensure_drive_scope_at(
+    app_dir: &std::path::Path,
+    client_id: &str,
+    client_secret: Option<&str>,
+    token_url: &str,
+) -> Result<StoredToken, String> {
+    ensure_scope_at(
         app_dir,
         client_id,
         client_secret,
+        token_url,
         scope_grants_drive_appdata,
         NEEDS_DRIVE_REAUTH,
     )
@@ -325,6 +359,50 @@ mod tests {
         let dir = temp_dir().join(format!("neko-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[tokio::test]
+    async fn refresh_access_token_at_posts_to_the_injected_url_instead_of_the_hardcoded_one() {
+        let dir = temp_app_dir();
+        let stored = StoredToken {
+            access_token: "ya29.old".into(),
+            refresh_token: "1//refresh".into(),
+            expires_at: 0,
+            scope: "spreadsheets".into(),
+        };
+        {
+            // Escopo restrito ao trecho SÍNCRONO (nunca atravessa um `.await` — clippy reprova um
+            // `std::sync::Mutex` mantido através de um ponto de suspensão): só a GRAVAÇÃO inicial
+            // do token antigo precisa do fallback de arquivo num ambiente sem keychain (CI
+            // headless). A gravação do token RENOVADO, feita dentro de `refresh_access_token_at`
+            // depois do `.await` de rede, pode falhar fechada no mesmo ambiente sem invalidar
+            // este teste — o que ele prova é qual URL recebeu o POST, não se a gravação final
+            // teve como persistir.
+            let _guard = secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            store_token(&dir, &stored).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"access_token": "ya29.new", "expires_in": 3600}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let token_url = format!("{}/token", server.url());
+
+        let _ = refresh_access_token_at(&dir, "client-id", None, &token_url).await;
+
+        mock.assert_async().await;
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
