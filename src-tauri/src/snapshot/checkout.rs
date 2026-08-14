@@ -76,13 +76,13 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> Result<SqlitePool, Str
 
 /// Desfecho de [`reopen_after_swap_or_rollback`] quando reabrir NÃO propaga um erro fatal.
 #[derive(Debug)]
-enum ReopenOutcome {
+pub(crate) enum ReopenOutcome {
     /// Caso comum: o conteúdo recém-trocado reabriu de primeira.
     Reopened(SqlitePool),
     /// Reabrir o conteúdo recém-trocado falhou, mas havia uma salvaguarda do banco de ANTES da
-    /// troca — revertida e reaberta com sucesso. `message` é o aviso não-fatal que
-    /// `checkout_on_open` devolve como `outcome: Err` (a UI de Conexão mostra; a próxima abertura
-    /// tenta o snapshot remoto de novo).
+    /// troca — revertida e reaberta com sucesso. `message` é o aviso não-fatal que o chamador
+    /// devolve (a UI de Conexão mostra); cada chamador (check-out do boot, resolução de conflito
+    /// `use_remote` em `snapshot_cmds`) compõe a frase final no seu próprio contexto.
     RolledBack { pool: SqlitePool, message: String },
 }
 
@@ -96,7 +96,12 @@ enum ReopenOutcome {
 /// `Err` só quando NENHUM pool utilizável sobra: sem `safeguard_path` (primeira restauração —
 /// nada para reverter) ou quando a própria reversão também falha. Esse é o único caso em que
 /// `checkout_on_open` ainda propaga um erro fatal de verdade.
-async fn reopen_after_swap_or_rollback(
+///
+/// `pub(crate)`: reusada por `snapshot_cmds::resolve_conflict_use_remote_core`, que faz o mesmo
+/// swap+reopen depois da escolha explícita "usar o outro aparelho" na tela de conflito — a mesma
+/// janela de reabertura falha depois de uma troca já confirmada, então a mesma reversão automática
+/// se aplica, em vez de duplicar a lógica.
+pub(crate) async fn reopen_after_swap_or_rollback(
     db_path: &Path,
     safeguard_path: Option<&Path>,
 ) -> Result<ReopenOutcome, String> {
@@ -122,12 +127,14 @@ async fn reopen_after_swap_or_rollback(
         ));
     }
     match open_migrated_pool(db_path).await {
+        // A mensagem descreve só O QUE aconteceu (reabertura falhou, revertido com sucesso) — o
+        // "o que fazer a seguir" é ESPECÍFICO de cada chamador (o check-out do boot tenta de novo
+        // sozinho na próxima abertura; a resolução de conflito em `snapshot_cmds` deixa a disputa
+        // pendente para o dono escolher de novo), então fica por conta de quem chama compor esse
+        // final.
         Ok(pool) => Ok(ReopenOutcome::RolledBack {
             pool,
-            message: format!(
-                "{fatal_msg}; revertido automaticamente para o banco anterior — o snapshot \
-                 remoto será tentado de novo na próxima abertura"
-            ),
+            message: format!("{fatal_msg}; revertido automaticamente para o banco anterior"),
         }),
         Err(reopen_after_rollback_err) => Err(format!(
             "{fatal_msg}; reversão automática também falhou ao reabrir: {reopen_after_rollback_err}"
@@ -458,7 +465,11 @@ async fn commit_restore(ready: ReadyToCommit, db_path: &Path) -> Result<Checkout
         Ok(ReopenOutcome::RolledBack { pool, message }) => {
             return Ok(CheckoutResult {
                 pool,
-                outcome: Err(message),
+                // Cláusula final ESPECÍFICA deste chamador (ver o doc de `ReopenOutcome`): o
+                // check-out do boot converge sozinho, sem exigir nenhum gesto do dono.
+                outcome: Err(format!(
+                    "{message} — o snapshot remoto será tentado de novo na próxima abertura"
+                )),
             });
         }
         // Sem salvaguarda para reverter (primeira restauração) OU a própria reversão também
