@@ -162,10 +162,28 @@ pub(crate) async fn resolve_drive_client_best_effort(
     pool: &SqlitePool,
     app_dir: &Path,
 ) -> Result<Option<DriveSnapshotClient>, String> {
+    resolve_drive_client_best_effort_at(
+        pool,
+        app_dir,
+        crate::oauth::token_store::production_token_url(),
+        super::transport::production_base_url(),
+    )
+    .await
+}
+
+/// Núcleo testável de [`resolve_drive_client_best_effort`], com o endpoint de refresh do token E a
+/// base do Drive INJETÁVEIS — o jeito de testar o teto de espera do boot cobrindo o refresh
+/// (`checkout_on_open_best_effort_at`) sem tocar rede de verdade.
+async fn resolve_drive_client_best_effort_at(
+    pool: &SqlitePool,
+    app_dir: &Path,
+    token_url: &str,
+    drive_base_url: &str,
+) -> Result<Option<DriveSnapshotClient>, String> {
     let Some(client_id) = crate::sync_task::resolve_client_id(pool).await else {
         return Ok(None);
     };
-    // Checado ANTES de `ensure_drive_scope`, sync (é uma leitura local — keychain/arquivo, nunca
+    // Checado ANTES de `ensure_drive_scope_at`, sync (é uma leitura local — keychain/arquivo, nunca
     // rede): só assim dá para distinguir "nunca conectou" (silencioso) de uma falha real DEPOIS de
     // decidir tentar (o refresh abaixo, que pode tocar rede).
     match crate::oauth::token_store::load_token(app_dir) {
@@ -174,10 +192,11 @@ pub(crate) async fn resolve_drive_client_best_effort(
         Err(e) => return Err(e),
     }
     let client_secret = crate::oauth::pkce::resolve_client_secret(None);
-    let token = match crate::oauth::token_store::ensure_drive_scope(
+    let token = match crate::oauth::token_store::ensure_drive_scope_at(
         app_dir,
         &client_id,
         client_secret.as_deref(),
+        token_url,
     )
     .await
     {
@@ -185,10 +204,7 @@ pub(crate) async fn resolve_drive_client_best_effort(
         Err(e) if e == crate::oauth::token_store::NEEDS_DRIVE_REAUTH => return Ok(None),
         Err(e) => return Err(e),
     };
-    Ok(Some(DriveSnapshotClient::new(
-        token,
-        super::transport::production_base_url(),
-    )))
+    Ok(Some(DriveSnapshotClient::new(token, drive_base_url)))
 }
 
 /// Tudo capturado ANTES do ponto de não-retorno (fechar o pool antigo) e pronto para o commit da
@@ -532,20 +548,35 @@ async fn checkout_on_open(
 }
 
 /// Teto de espera do check-out no BOOT: `http.rs` já dá 10s de connect + 30s de
-/// request × 3 tentativas por chamada, e `prepare_restore` faz duas chamadas sequenciais
-/// (`fetch_manifest` + `download_snapshot`) — sem teto próprio, uma rede que engole pacotes
-/// (portal cativo, VPN degradada) prende a abertura do app por dezenas de segundos a minutos,
-/// porque isto roda dentro do `block_on` síncrono do `setup()` em `lib.rs`. 20s é folgado o
-/// bastante para uma rede lenta de verdade responder ao manifest (tipicamente sub-segundo), mas
-/// bem curto perto do pior caso de uma ÚNICA tentativa HTTP (10s de connect + 30s de request) —
-/// ou seja, ao estourar o teto o app está esperando a REDE, GARANTIDO (não "quase sempre"): o
-/// teto só envolve `prepare_restore`, que nunca fecha nem troca o arquivo — ver o doc de
-/// [`RestorePreparation`] para a garantia completa. Residual conhecido: o refresh do token OAuth
-/// (`resolve_drive_client_best_effort`, chamado ANTES deste teto) usa o mesmo cliente HTTP com
-/// timeout próprio, mas não está coberto por ESTE teto — a URL do endpoint de refresh é fixa
-/// (`oauth2.googleapis.com`), não injetável para apontar a um servidor de teste, então cobri-la
-/// aqui exigiria um refactor maior que este follow-up não escopa.
+/// request × 3 tentativas por chamada, e um boot completo pode precisar de até três dessas
+/// chamadas em sequência — o refresh do token OAuth (quando expirado, dentro de
+/// `resolve_drive_client_best_effort`), `fetch_manifest` e `download_snapshot` (dentro de
+/// `prepare_restore`) — sem teto próprio, uma rede que engole pacotes (portal cativo, VPN
+/// degradada) prende a abertura do app por dezenas de segundos a minutos, porque isto roda dentro
+/// do `block_on` síncrono do `setup()` em `lib.rs`. 20s é folgado o bastante para uma rede lenta de
+/// verdade responder a qualquer uma dessas chamadas (tipicamente sub-segundo), mas bem curto perto
+/// do pior caso de uma ÚNICA tentativa HTTP (10s de connect + 30s de request) — ou seja, ao
+/// estourar o teto o app está esperando a REDE, GARANTIDO (não "quase sempre"). O teto cobre as
+/// TRÊS chamadas como um orçamento ÚNICO e compartilhado (`checkout_on_open_best_effort_at`
+/// desconta da resolução do cliente antes de repassar o restante a `checkout_on_open_with_deadline`),
+/// nunca um teto próprio por chamada — nunca envolve `finish_restore`, que fecha o pool antigo e
+/// troca o arquivo — ver o doc de [`RestorePreparation`] para a garantia completa.
 const CHECKOUT_ON_OPEN_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// O aviso best-effort padrão quando um teto de espera do boot estoura: `pool` segue sendo o MESMO
+/// recebido, intacto — "offline pleno" nunca pode travar a abertura do app esperando rede.
+/// Compartilhado por [`checkout_on_open_with_deadline`] e [`checkout_on_open_best_effort_at`], os
+/// dois pontos que podem abandonar uma chamada de rede a meio caminho.
+fn deadline_exceeded_result(pool: SqlitePool, deadline: Duration) -> CheckoutResult {
+    CheckoutResult {
+        pool,
+        outcome: Err(format!(
+            "check-out sem resposta do Drive em {}s — seguindo com o banco local; a próxima \
+             abertura tenta de novo",
+            deadline.as_secs()
+        )),
+    }
+}
 
 /// Roda [`checkout_on_open`] com um teto de espera: ao estourar, devolve o MESMO pool que
 /// recebeu (best-effort — "offline pleno" nunca pode travar a abertura do app esperando rede) com
@@ -569,43 +600,61 @@ async fn checkout_on_open_with_deadline(
     match tokio::time::timeout(deadline, prepare_restore(pool, db_path, drive)).await {
         Ok(RestorePreparation::Done(result)) => Ok(result),
         Ok(RestorePreparation::ReadyToFinish(work)) => finish_restore(work, db_path).await,
-        Err(_elapsed) => Ok(CheckoutResult {
-            pool: pool_fallback,
-            outcome: Err(format!(
-                "check-out sem resposta do Drive em {}s — seguindo com o banco local; a próxima \
-                 abertura tenta de novo",
-                deadline.as_secs()
-            )),
-        }),
+        Err(_elapsed) => Ok(deadline_exceeded_result(pool_fallback, deadline)),
     }
 }
 
-/// O gancho de verdade que `lib.rs` chama na abertura do app: resolve o cliente do Drive via
-/// [`resolve_drive_client_best_effort`] e SILENCIA os motivos legítimos de não tentar — nunca
-/// conectou, sem client id configurado, escopo `drive.appdata` ainda não concedido. Nenhum desses
-/// é uma falha do check-out em si, é "sync ainda não configurado" (offline pleno) — e sem nada
-/// para tentar, nenhum aviso de uma tentativa ANTERIOR se sustenta (limpa junto). Uma falha
-/// DEPOIS de decidir tentar (rede ao resolver o token, rede/integridade dentro de
-/// `checkout_on_open`, ou o teto de espera acima estourando) continua reportada em `outcome`,
-/// nunca engolida — só a decisão de TENTAR é best-effort, não o resultado da tentativa. Por isso
-/// os três caminhos (não configurado, resolver falhou de verdade, `checkout_on_open_with_deadline`
-/// rodou) convergem para o MESMO registro de desfecho abaixo, em vez de cada um sair cedo — a
-/// diferença entre "nada a avisar" e "chegou a falhar" não pode depender de qual ramo lembrou de
-/// gravar.
-pub async fn checkout_on_open_best_effort(
+/// Núcleo testável de [`checkout_on_open_best_effort`], com o endpoint de refresh do token e a
+/// base do Drive INJETÁVEIS: resolve o cliente do Drive via
+/// [`resolve_drive_client_best_effort_at`] (que inclui o refresh do token quando expirado) e
+/// SILENCIA os motivos legítimos de não tentar — nunca conectou, sem client id configurado, escopo
+/// `drive.appdata` ainda não concedido. Nenhum desses é uma falha do check-out em si, é "sync ainda
+/// não configurado" (offline pleno) — e sem nada para tentar, nenhum aviso de uma tentativa
+/// ANTERIOR se sustenta (limpa junto). Uma falha DEPOIS de decidir tentar (rede ao resolver o
+/// token, rede/integridade dentro de `checkout_on_open`, ou o teto de espera estourando em
+/// qualquer uma das chamadas) continua reportada em `outcome`, nunca engolida — só a decisão de
+/// TENTAR é best-effort, não o resultado da tentativa.
+///
+/// A resolução do cliente (client id → token, com o refresh quando expirado) e `prepare_restore`
+/// dividem um ÚNICO orçamento de `deadline`: a resolução roda sob `tokio::time::timeout(deadline,
+/// ..)` e, se voltar a tempo com um cliente pronto, o QUE SOBROU do orçamento (`deadline` menos o
+/// tempo já gasto) é o que `checkout_on_open_with_deadline` recebe para `prepare_restore` — nunca
+/// um teto cheio por chamada, senão o pior caso somaria (refresh pendurado + manifest pendurado)
+/// em vez de ficar preso ao mesmo teto único. `pool` nunca é tocado antes de `prepare_restore`
+/// (resolver o cliente só lê rede/keychain local), então abandonar a resolução a meio caminho
+/// devolve o MESMO pool recebido, intacto — a mesma garantia de best-effort de
+/// `checkout_on_open_with_deadline`.
+async fn checkout_on_open_best_effort_at(
     pool: SqlitePool,
     db_path: &Path,
     app_dir: &Path,
+    token_url: &str,
+    drive_base_url: &str,
+    deadline: Duration,
 ) -> Result<CheckoutResult, String> {
-    let result = match resolve_drive_client_best_effort(&pool, app_dir).await {
-        Ok(Some(drive)) => {
-            checkout_on_open_with_deadline(pool, db_path, &drive, CHECKOUT_ON_OPEN_TIMEOUT).await?
+    let resolve_started_at = std::time::Instant::now();
+    // `resolve_drive_client_best_effort_at` só toma `&pool` (EMPRÉSTIMO, nunca posse) — ao contrário
+    // do `prepare_restore` movido para dentro de `checkout_on_open_with_deadline` (que documenta por
+    // que aquele precisa de um clone de segurança), aqui `pool` nunca é consumido pelo `timeout`:
+    // o empréstimo termina quando o `.await` completa (em QUALQUER ramo, inclusive o de estouro), e
+    // `pool` continua disponível para mover abaixo. Nenhum clone de segurança é necessário.
+    let resolved = tokio::time::timeout(
+        deadline,
+        resolve_drive_client_best_effort_at(&pool, app_dir, token_url, drive_base_url),
+    )
+    .await;
+
+    let result = match resolved {
+        Err(_elapsed) => deadline_exceeded_result(pool, deadline),
+        Ok(Ok(Some(drive))) => {
+            let remaining = deadline.saturating_sub(resolve_started_at.elapsed());
+            checkout_on_open_with_deadline(pool, db_path, &drive, remaining).await?
         }
-        Ok(None) => CheckoutResult {
+        Ok(Ok(None)) => CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
         },
-        Err(e) => CheckoutResult {
+        Ok(Err(e)) => CheckoutResult {
             pool,
             outcome: Err(e),
         },
@@ -630,6 +679,24 @@ pub async fn checkout_on_open_best_effort(
     }
 
     Ok(result)
+}
+
+/// O gancho de verdade que `lib.rs` chama na abertura do app — [`checkout_on_open_best_effort_at`]
+/// com os endpoints de produção e o teto de 20s ([`CHECKOUT_ON_OPEN_TIMEOUT`]).
+pub async fn checkout_on_open_best_effort(
+    pool: SqlitePool,
+    db_path: &Path,
+    app_dir: &Path,
+) -> Result<CheckoutResult, String> {
+    checkout_on_open_best_effort_at(
+        pool,
+        db_path,
+        app_dir,
+        crate::oauth::token_store::production_token_url(),
+        super::transport::production_base_url(),
+        CHECKOUT_ON_OPEN_TIMEOUT,
+    )
+    .await
 }
 
 /// Rótulo fechado gravado em `snapshot_state.last_checkout_outcome` pela sonda de FOCO (nunca por
@@ -2120,6 +2187,85 @@ mod tests {
     }
 
     // --- Teto de espera do check-out no boot -----------------------------------------------------
+
+    #[tokio::test]
+    async fn checkout_on_open_best_effort_treats_a_hanging_token_refresh_as_part_of_the_same_boot_deadline()
+     {
+        // Regressão da issue #460: o refresh do token OAuth rodava ANTES do teto de espera do
+        // boot — uma rede que engole pacotes no refresh prendia a abertura do app pelo pior caso
+        // do cliente HTTP (10s de connect + 30s de request × 3 tentativas), não pelo teto do
+        // boot. Este teste prova que o refresh agora divide o MESMO orçamento: um endpoint de
+        // refresh que aceita a conexão e nunca responde é abandonado pelo teto INJETADO, não pelo
+        // timeout do cliente HTTP.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "client-de-teste")
+            .await
+            .unwrap();
+        {
+            // Escopo restrito ao trecho SÍNCRONO — nunca atravessa um `.await` (clippy reprova um
+            // `std::sync::Mutex` mantido através de um ponto de suspensão).
+            let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            let expired = crate::oauth::token_store::StoredToken {
+                access_token: "ya29.expired".into(),
+                refresh_token: "1//refresh".into(),
+                expires_at: 0, // já expirado — obriga o refresh antes de qualquer chamada ao Drive
+                scope: "https://www.googleapis.com/auth/drive.appdata".into(),
+            };
+            crate::oauth::token_store::store_token(&app_dir, &expired).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        // Mesmo padrão de listener pendurado do teste abaixo, agora no endpoint de REFRESH — o
+        // Drive nunca chega a ser alcançado (o refresh trava antes).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind listener de teste");
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::mem::forget(stream);
+            }
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        });
+        let token_url = format!("http://{addr}/token");
+
+        let start = std::time::Instant::now();
+        let result = checkout_on_open_best_effort_at(
+            pool,
+            &db_path,
+            &app_dir,
+            &token_url,
+            crate::snapshot::transport::production_base_url(),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect("o teto de espera nunca é uma falha fatal — sempre devolve um pool utilizável");
+
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "o refresh pendurado precisa ser abandonado pelo TETO injetado (200ms) — se isto \
+             levar segundos, o refresh escapou do teto e caiu no timeout do cliente HTTP (10s \
+             connect + 30s request × 3 tentativas)"
+        );
+        let err = result.outcome.unwrap_err();
+        assert!(err.contains("check-out"), "erro: {err}");
+
+        // O pool devolvido continua o MESMO banco, utilizável — a tentativa abandonada nunca
+        // chegou perto de tocar o `pool` (resolver o cliente só lê rede/keychain local).
+        let state_after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(state_after.base_sequence, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[tokio::test]
     async fn checkout_on_open_with_deadline_gives_up_and_keeps_the_original_pool_usable_when_the_network_hangs()
