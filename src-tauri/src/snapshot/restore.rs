@@ -198,12 +198,31 @@ pub(crate) fn swap_active_db_atomically(
 }
 
 /// Reverte `active_db` para o conteúdo da salvaguarda depois que REABRIR o banco recém-trocado
-/// falhou: sobrescreve `active_db` com uma CÓPIA da salvaguarda (nunca apaga a salvaguarda em si —
-/// se a reabertura falhar de novo, o caminho dela ainda serve para recuperação manual) e limpa
-/// sidecars `-wal`/`-shm` que a restauração abandonada possa ter deixado ao lado do arquivo novo,
-/// para a reabertura seguinte não ler um WAL órfão de um conteúdo já descartado.
+/// falhou: copia a salvaguarda para um TEMPORÁRIO ao lado e só então troca por `rename` —
+/// nunca apaga a salvaguarda em si (se a reabertura falhar de novo, o caminho dela ainda serve
+/// para recuperação manual) — e limpa sidecars `-wal`/`-shm` que a restauração abandonada possa
+/// ter deixado ao lado do arquivo novo, para a reabertura seguinte não ler um WAL órfão de um
+/// conteúdo já descartado.
+///
+/// Copiar DIRETO para `active_db` (a versão anterior desta função) sobrescreveria o arquivo ativo
+/// bytes-a-bytes; uma cópia que falha no MEIO (disco cheio, processo morto) deixaria `active_db`
+/// truncado — o próprio conteúdo que a reversão existe para preservar, corrompido pela reversão
+/// em si. O par copiar-para-tmp-e-renomear é a MESMA garantia que `swap_active_db_atomically` já
+/// usa para a troca de verdade: só o `rename` final (um único syscall) troca o que `active_db`
+/// aponta, então uma falha na cópia nunca toca o arquivo ativo, e uma falha no rename nunca deixa
+/// nada pela metade.
 pub(crate) fn rollback_to_safeguard(safeguard: &Path, active_db: &Path) -> Result<(), String> {
-    std::fs::copy(safeguard, active_db).map_err(|e| format!("reverter para a salvaguarda: {e}"))?;
+    let parent = active_db.parent().unwrap_or_else(|| Path::new("."));
+    let tmp_path = parent.join(format!("neko-rollback-{}.db", uuid::Uuid::new_v4()));
+
+    if let Err(e) = std::fs::copy(safeguard, &tmp_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("reverter para a salvaguarda: {e}"));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, active_db) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("reverter para a salvaguarda: {e}"));
+    }
     for suffix in ["-wal", "-shm"] {
         let _ = std::fs::remove_file(sidecar(active_db, suffix));
     }
@@ -511,6 +530,45 @@ mod tests {
 
         let err = rollback_to_safeguard(&safeguard, &active).unwrap_err();
         assert!(err.contains("reverter para a salvaguarda"), "erro: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rollback_to_safeguard_leaves_active_db_untouched_when_the_final_swap_fails() {
+        // Regressão (issue #446, D3 do PR #452): a reversão copiava DIRETO para `active_db`, o
+        // que deixaria o arquivo ativo truncado se a cópia falhasse no meio (disco cheio,
+        // processo morto). O conserto copia para um TEMPORÁRIO e só troca por `rename` — aqui
+        // forçamos a falha exatamente no passo final (`active_db` é um DIRETÓRIO, então o
+        // `rename` do arquivo temporário sobre ele falha) para provar que: (a) `active_db`
+        // continua exatamente como estava (a cópia nunca o tocou, só o temporário) e (b) nenhum
+        // `neko-rollback-*.db` órfão sobra no diretório.
+        let dir = test_dir();
+        let active = dir.join("active.db");
+        let safeguard = dir.join("active.pre-restore-test.db");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::write(&safeguard, b"conteudo de antes da troca").unwrap();
+
+        let err = rollback_to_safeguard(&safeguard, &active).unwrap_err();
+        assert!(err.contains("reverter para a salvaguarda"), "erro: {err}");
+
+        assert!(
+            active.is_dir(),
+            "active_db continua exatamente como estava — a cópia foi para um temporário, nunca \
+             direto nele"
+        );
+        let leftover: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("neko-rollback-")
+            })
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "o temporário órfão da tentativa falha precisa ser limpo, não sobrar para sempre"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

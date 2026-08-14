@@ -47,6 +47,7 @@ const DETAILS: DriveConflictDetails = {
       source_sheet: "Cartão",
     },
   ],
+  this_device_id: "este-aparelho-11111111",
 };
 
 describe("SnapshotConflictScreen", () => {

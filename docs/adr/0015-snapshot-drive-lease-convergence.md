@@ -30,13 +30,27 @@ existente); um manifest de sequência monotônica por aparelho decide quem pode 
   de escolher, nunca só o lado que a tela presume perdedor. O `sync_log` hoje só registra
   import/write-back da planilha; a lista reflete exatamente o que está gravado ali, sem
   instrumentar gestos de domínio (splits, tags, teto, faturas) — expandir essa cobertura é decisão
-  própria, fora do escopo deste mecanismo.
+  própria, fora do escopo deste mecanismo. O corte "desde a base em comum" é por SEQUÊNCIA
+  (`sync_log.seq`, um contador monotônico gravado por trigger em cada linha — nunca o rowid
+  implícito do SQLite, que `VACUUM INTO` pode renumerar), não por timestamp: os dois aparelhos
+  eram bytes idênticos no momento do último sync, então `MAX(seq)` daquele instante
+  (`snapshot_state.base_sync_log_seq`) tem o MESMO significado nos dois lados sem depender de qual
+  relógio está certo — um relógio remoto atrasado nunca esconde um gesto de fato posterior à base.
+  O `sync_log` TEM deleções (diff-delete do re-import, delete manual de transação), então o
+  contador não pode ler `MAX(seq)` das linhas remanescentes a cada atribuição — um delete
+  encolhendo o log faria o próximo insert reusar um número já emitido, abaixo da âncora de algum
+  aparelho. `sync_log.seq` é gerado por uma tabela auxiliar de uma linha só
+  (`sync_log_seq`, `INTEGER PRIMARY KEY AUTOINCREMENT`) cujo watermark real mora em
+  `sqlite_sequence` — a garantia nativa do SQLite de nunca reemitir um valor, mesmo depois de
+  `DELETE` na tabela — e que sobrevive ao `VACUUM INTO`/download junto com o resto do snapshot.
 - O transporte fica atrás do `appDataFolder` do Drive — invisível ao dono, escopo OAuth estreito
   (`drive.appdata`, não acesso aos arquivos do Google Drive do usuário).
 - **Manifest com o próprio `device_id` só é "eu mesmo" dentro de uma janela estreita**: o
   check-out trata um manifest remoto com o `device_id` deste aparelho como o check-in que morreu
   entre o upload confirmado e a gravação do estado local — e só avança a base sem baixar nem
-  trocar arquivo — quando `remote.sequence == base_local + 1`, a largura exata dessa queda.
+  trocar arquivo — quando `remote.sequence` bate com `snapshot_state.pending_publish_sequence`, a
+  sequência PRETENDIDA gravada antes do upload (nunca a aritmética `base_local + 1`, que só cobria
+  o check-in normal — a resolução de conflito mantendo este aparelho publica além disso).
   Qualquer outra sequência com o mesmo id passa pelo veredito normal do árbitro (restauração
   visível). A identidade pode colidir por um caminho fora do lease (cópia manual da pasta do app,
   backup local restaurado à mão sem passar pelo strip do export) — nesse caso as duas instalações

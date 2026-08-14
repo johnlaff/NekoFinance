@@ -1,6 +1,6 @@
 - dialog "Conflito de sincronização entre aparelhos":
   - heading "Os dois aparelhos mudaram desde a última vez que se falaram" [level=2]
-  - status: Isto é outro aparelho (abcdef12). As listas abaixo cobrem só importações e escritas na planilha — split, tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui. Os horários do lado do outro aparelho vêm do relógio dele, não deste.
+  - status: Isto é de outro aparelho (abcdef12). As listas abaixo cobrem só importações e escritas na planilha — split, tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui. Os horários do lado do outro aparelho vêm do relógio dele, não deste.
   - region "Gestos deste aparelho":
     - heading "Gestos deste aparelho — perdidos se você usar o outro aparelho" [level=3]
     - list:

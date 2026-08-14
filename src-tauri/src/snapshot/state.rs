@@ -36,6 +36,20 @@ pub struct SnapshotState {
     /// nenhum roda enquanto isto não é `None`, para nunca competir com a escolha do dono na tela
     /// de conflito.
     pub conflict_pending_since: Option<String>,
+    /// Sequência PRETENDIDA de uma publicação em andamento — gravada ANTES do upload
+    /// (`drive_checkin_core`/`resolve_conflict_keep_local_core`), limpa quando `record_checkin`
+    /// confirma que a gravação local terminou. A guarda do próprio `device_id` em
+    /// `checkout::checkout_on_open` compara o manifest remoto contra ESTE valor em vez de inferir
+    /// a janela por aritmética (`base + 1`, que só cobria o check-in normal) — cobre também
+    /// `resolve_conflict_keep_local_core`, cujo candidato pode ser `base + 2` ou mais.
+    pub pending_publish_sequence: Option<i64>,
+    /// `MAX(sync_log.seq)` no momento em que `base_sequence` avançou por último (check-in,
+    /// check-out real, ou adoção da própria sequência) — a âncora de corte da lista de gestos do
+    /// conflito (`conflict::gestures_since`/`gestures_since_in_file`, ADR-0015). Sequência, nunca
+    /// timestamp: os dois aparelhos eram bytes idênticos naquele instante, então este valor tem o
+    /// MESMO significado nos dois lados sem depender de qual relógio está certo (issue #446, D3
+    /// do PR #447). `None` = nenhuma base ainda, ou `sync_log` vazio naquele momento.
+    pub base_sync_log_seq: Option<i64>,
 }
 
 /// Garante que a linha singleton existe, gerando `device_id` (UUID v4) na primeira leitura DESTE
@@ -55,12 +69,15 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
             Option<String>,
             i64,
             Option<String>,
+            Option<i64>,
+            Option<i64>,
         ),
     >(
         "SELECT device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
          last_export_sha256, last_checkout_at, last_checkout_device_id, \
          last_checkout_outcome, last_checkout_outcome_detail, \
-         pending_local_changes, conflict_pending_since \
+         pending_local_changes, conflict_pending_since, pending_publish_sequence, \
+         base_sync_log_seq \
          FROM snapshot_state WHERE id = 1",
     )
     .fetch_optional(pool)
@@ -79,6 +96,8 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
             last_checkout_outcome_detail: row.8,
             pending_local_changes: row.9 != 0,
             conflict_pending_since: row.10,
+            pending_publish_sequence: row.11,
+            base_sync_log_seq: row.12,
         });
     }
 
@@ -101,15 +120,20 @@ pub async fn load_or_init(pool: &SqlitePool) -> Result<SnapshotState, String> {
         last_checkout_outcome_detail: None,
         pending_local_changes: false,
         conflict_pending_since: None,
+        pending_publish_sequence: None,
+        base_sync_log_seq: None,
     })
 }
 
 /// Grava o resultado de um check-in bem-sucedido: a NOVA sequência-base (o que acabamos de
 /// publicar, já confirmada no manifest remoto), quando/por qual aparelho, e o hash do export
 /// publicado (para o PRÓXIMO check-in saber se algo mudou de verdade). Uma publicação bem-sucedida
-/// também limpa `pending_local_changes` (o que era pendente acabou de subir) e
+/// também limpa `pending_local_changes` (o que era pendente acabou de subir),
 /// `conflict_pending_since` (chegar até aqui exige o veredito `Push`, nunca `Conflict` — qualquer
-/// disputa anterior já não se sustenta).
+/// disputa anterior já não se sustenta) e `pending_publish_sequence` (a gravação local que a
+/// guarda do próprio `device_id` esperava terminou, então não há mais nada "em andamento"). Grava
+/// também `base_sync_log_seq` (`MAX(sync_log.seq)` neste exato instante) — a nova âncora de corte
+/// da lista de gestos do conflito (ADR-0015, issue #446 D3 do PR #447).
 pub async fn record_checkin(
     pool: &SqlitePool,
     new_base_sequence: i64,
@@ -120,7 +144,9 @@ pub async fn record_checkin(
     sqlx::query(
         "UPDATE snapshot_state \
          SET base_sequence = ?1, last_checkin_at = ?2, last_checkin_device_id = ?3, \
-         last_export_sha256 = ?4, pending_local_changes = 0, conflict_pending_since = NULL \
+         last_export_sha256 = ?4, pending_local_changes = 0, conflict_pending_since = NULL, \
+         pending_publish_sequence = NULL, \
+         base_sync_log_seq = (SELECT MAX(seq) FROM sync_log) \
          WHERE id = 1",
     )
     .bind(new_base_sequence)
@@ -130,6 +156,24 @@ pub async fn record_checkin(
     .execute(pool)
     .await
     .map_err(|e| format!("gravar check-in: {e}"))?;
+    Ok(())
+}
+
+/// Grava (ou limpa, com `None`) a sequência PRETENDIDA de uma publicação em andamento — chamado
+/// ANTES do upload para o Drive, tanto pelo check-in normal quanto por
+/// `resolve_conflict_keep_local_core`. Se o upload em si falhar (nunca chegou a existir no Drive),
+/// o chamador limpa de volta para `None` — nada ficou pendente para a guarda de `checkout_on_open`
+/// reconciliar. Se o upload suceder mas a gravação local (`record_checkin`) morrer antes de
+/// terminar, o valor sobrevive à queda e é isso que a guarda usa no próximo boot.
+pub async fn record_pending_publish(
+    pool: &SqlitePool,
+    sequence: Option<i64>,
+) -> Result<(), String> {
+    sqlx::query("UPDATE snapshot_state SET pending_publish_sequence = ?1 WHERE id = 1")
+        .bind(sequence)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("gravar sequência de publicação pendente: {e}"))?;
     Ok(())
 }
 
@@ -185,9 +229,12 @@ pub async fn record_conflict_pending(pool: &SqlitePool, since: Option<&str>) -> 
 /// `last_checkin_at`/`last_checkin_device_id`: os valores capturados só valem para SEMEAR uma
 /// linha nova, nunca para sobrescrever um histórico de check-in que já estava ali.
 ///
-/// `pending_local_changes`/`conflict_pending_since` SEMPRE voltam ao estado limpo (0/`NULL`) nos
-/// dois ramos: o conteúdo ativo acabou de ser TROCADO pelo do remoto, então qualquer diff ou
-/// disputa registrada antes da troca se refere a um conteúdo que não existe mais.
+/// `pending_local_changes`/`conflict_pending_since`/`pending_publish_sequence` SEMPRE voltam ao
+/// estado limpo (0/`NULL`) nos dois ramos: o conteúdo ativo acabou de ser TROCADO pelo do remoto,
+/// então qualquer diff, disputa ou publicação em andamento registrada antes da troca se refere a
+/// um conteúdo que não existe mais. `base_sync_log_seq` vira `MAX(sync_log.seq)` DESTE momento —
+/// o `sync_log` já é o do arquivo recém-trocado (o `pool` recebido abriu DEPOIS do swap), então o
+/// valor reflete a base de fato restaurada, nunca a de antes da troca.
 #[allow(clippy::too_many_arguments)]
 pub async fn adopt_after_restore(
     pool: &SqlitePool,
@@ -203,8 +250,8 @@ pub async fn adopt_after_restore(
         "INSERT INTO snapshot_state \
             (id, device_id, base_sequence, last_checkin_at, last_checkin_device_id, \
              last_export_sha256, last_checkout_at, last_checkout_device_id, pending_local_changes, \
-             conflict_pending_since) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, NULL) \
+             conflict_pending_since, pending_publish_sequence, base_sync_log_seq) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, NULL, NULL, (SELECT MAX(seq) FROM sync_log)) \
          ON CONFLICT (id) DO UPDATE SET \
             device_id = excluded.device_id, \
             base_sequence = excluded.base_sequence, \
@@ -212,7 +259,9 @@ pub async fn adopt_after_restore(
             last_checkout_at = excluded.last_checkout_at, \
             last_checkout_device_id = excluded.last_checkout_device_id, \
             pending_local_changes = 0, \
-            conflict_pending_since = NULL",
+            conflict_pending_since = NULL, \
+            pending_publish_sequence = NULL, \
+            base_sync_log_seq = (SELECT MAX(seq) FROM sync_log)",
     )
     .bind(device_id)
     .bind(base_sequence)
@@ -227,18 +276,25 @@ pub async fn adopt_after_restore(
     Ok(())
 }
 
-/// Avança só a sequência-base local, sem tocar em mais nada — o caso em que o manifest remoto
-/// carrega o NOSSO PRÓPRIO `device_id` (ADR-0015: um check-in que morreu entre o upload
-/// confirmado e a gravação do estado local deixa o remoto um passo à frente da nossa base, com a
-/// NOSSA identidade). O conteúdo já é nosso — só a base local está atrasada;
-/// restaurar de verdade descartaria qualquer trabalho feito depois do upload. Nunca mexe em
-/// `last_checkout_at`/`last_checkout_device_id`: nada foi de fato lido de outro aparelho.
+/// Avança a sequência-base local e limpa `pending_publish_sequence` — o caso em que o manifest
+/// remoto carrega o NOSSO PRÓPRIO `device_id` E bate com a publicação em andamento (ADR-0015: um
+/// check-in que morreu entre o upload confirmado e a gravação do estado local deixa o remoto à
+/// frente da nossa base, com a NOSSA identidade). O conteúdo já é nosso — só a base local estava
+/// atrasada; restaurar de verdade descartaria qualquer trabalho feito depois do upload. Nunca mexe
+/// em `last_checkout_at`/`last_checkout_device_id`: nada foi de fato lido de outro aparelho.
+/// `base_sync_log_seq` também avança para `MAX(sync_log.seq)` — o conteúdo local não mudou, mas a
+/// base agora inclui tudo que já estava aqui.
 pub async fn adopt_own_sequence(pool: &SqlitePool, base_sequence: i64) -> Result<(), String> {
-    sqlx::query("UPDATE snapshot_state SET base_sequence = ?1 WHERE id = 1")
-        .bind(base_sequence)
-        .execute(pool)
-        .await
-        .map_err(|e| format!("adotar sequência do próprio aparelho: {e}"))?;
+    sqlx::query(
+        "UPDATE snapshot_state \
+         SET base_sequence = ?1, pending_publish_sequence = NULL, \
+         base_sync_log_seq = (SELECT MAX(seq) FROM sync_log) \
+         WHERE id = 1",
+    )
+    .bind(base_sequence)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("adotar sequência do próprio aparelho: {e}"))?;
     Ok(())
 }
 
@@ -636,6 +692,39 @@ mod tests {
             after.last_checkin_at.as_deref(),
             Some("2026-08-11 09:00:00")
         );
+        assert!(
+            after.pending_publish_sequence.is_none(),
+            "a publicação em andamento se resolveu — adopt_own_sequence limpa o valor"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_pending_publish_round_trips_and_defaults_to_none() {
+        let pool = single_connection_pool().await;
+        let initial = load_or_init(&pool).await.expect("init");
+        assert!(
+            initial.pending_publish_sequence.is_none(),
+            "estado inicial: nada publicando"
+        );
+
+        record_pending_publish(&pool, Some(4))
+            .await
+            .expect("gravar sequência pretendida");
+        assert_eq!(
+            load_or_init(&pool).await.unwrap().pending_publish_sequence,
+            Some(4)
+        );
+
+        record_pending_publish(&pool, None)
+            .await
+            .expect("limpar sequência pretendida");
+        assert!(
+            load_or_init(&pool)
+                .await
+                .unwrap()
+                .pending_publish_sequence
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -696,6 +785,7 @@ mod tests {
         record_conflict_pending(&pool, Some("2026-08-13T10:00:00Z"))
             .await
             .unwrap();
+        record_pending_publish(&pool, Some(1)).await.unwrap();
 
         record_checkin(
             &pool,
@@ -715,6 +805,10 @@ mod tests {
         assert!(
             after.conflict_pending_since.is_none(),
             "chegar a um check-in publicado exige veredito Push, não Conflict"
+        );
+        assert!(
+            after.pending_publish_sequence.is_none(),
+            "a gravação local terminou — a sequência pretendida não fica mais 'em andamento'"
         );
     }
 
@@ -738,6 +832,7 @@ mod tests {
         let after_insert = load_or_init(&pool_insert).await.unwrap();
         assert!(!after_insert.pending_local_changes);
         assert!(after_insert.conflict_pending_since.is_none());
+        assert!(after_insert.pending_publish_sequence.is_none());
 
         // Ramo 2: linha já existe com pendências de ANTES da troca — o conteúdo ativo acabou de
         // ser substituído pelo remoto, então nada do que valia antes se sustenta.
@@ -749,6 +844,7 @@ mod tests {
         record_conflict_pending(&pool_update, Some("2026-08-13T08:00:00Z"))
             .await
             .unwrap();
+        record_pending_publish(&pool_update, Some(9)).await.unwrap();
 
         adopt_after_restore(
             &pool_update,
@@ -770,6 +866,10 @@ mod tests {
         assert!(
             after_update.conflict_pending_since.is_none(),
             "a disputa era sobre um conteúdo local que acabou de ser substituído"
+        );
+        assert!(
+            after_update.pending_publish_sequence.is_none(),
+            "a publicação em andamento era sobre um conteúdo que acabou de ser substituído"
         );
     }
 

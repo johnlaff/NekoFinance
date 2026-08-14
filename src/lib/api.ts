@@ -1230,6 +1230,10 @@ export interface DriveConflictDetails {
   remote_manifest: DriveConflictRemoteManifest;
   local_gestures: DriveConflictGesture[];
   remote_gestures: DriveConflictGesture[];
+  /** Identidade DESTE aparelho — mesmo campo de `DriveCheckinInfo.this_device_id`. Um conflito
+   *  genuíno nunca deveria trazer `remote_manifest.device_id` igual a este, mas a tela não pode
+   *  assumir essa invariante silenciosamente (ver `conflictRemoteDeviceLabel`). */
+  this_device_id: string;
 }
 
 export function driveConflictDetails(

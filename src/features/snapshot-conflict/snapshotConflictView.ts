@@ -139,11 +139,19 @@ export function conflictGestureDatedLabel(
   return recency ? `${type} — ${recency}` : `${type} — ${gesture.at}`;
 }
 
-/** Identifica o outro aparelho pelos 8 primeiros caracteres do id — o suficiente para
- *  diferenciar sem expor o UUID inteiro numa linha de estado (mesmo padrão de
- *  `configView.driveCheckinLabel`). */
+/** Identifica de quem é o manifest remoto da disputa — mesmo padrão de
+ *  `configView.driveCheckoutLabel`: compara com `thisDeviceId` em vez de cravar "outro aparelho"
+ *  sempre. Um conflito genuíno nunca deveria trazer o `device_id` deste aparelho (a disputa é,
+ *  por definição, entre DOIS aparelhos — o árbitro puro, `lease::decide`, nunca a garante
+ *  sozinho), mas no cenário do check-in morto (a gravação local de uma resolução anterior caiu
+ *  antes de terminar) o manifest que esta tela busca pode ser a NOSSA PRÓPRIA publicação — sem
+ *  comparar, o dono leria o próprio id rotulado de "outro aparelho". Os 8 primeiros caracteres do
+ *  id bastam para diferenciar sem expor o UUID inteiro numa linha de estado. */
 export function conflictRemoteDeviceLabel(
   manifest: DriveConflictDetails["remote_manifest"],
+  thisDeviceId: string,
 ): string {
-  return `outro aparelho (${manifest.device_id.slice(0, 8)})`;
+  return manifest.device_id === thisDeviceId
+    ? "deste aparelho"
+    : `de outro aparelho (${manifest.device_id.slice(0, 8)})`;
 }

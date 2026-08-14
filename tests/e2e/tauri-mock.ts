@@ -958,6 +958,7 @@ export async function mockTauri(page: Page, overrides: Record<string, unknown> =
           source_sheet: "Cartão",
         },
       ],
+      this_device_id: "este-aparelho-99999999",
     };
 
     const responses: Record<string, unknown> = {
