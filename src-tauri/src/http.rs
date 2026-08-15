@@ -23,13 +23,49 @@ pub fn client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new())
+            android_client_builder(
+                reqwest::Client::builder()
+                    .connect_timeout(CONNECT_TIMEOUT)
+                    .timeout(REQUEST_TIMEOUT),
+            )
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
         })
         .clone()
+}
+
+/// Raízes de CA da Mozilla embutidas no binário (`webpki-root-certs`), convertidas para o tipo
+/// que o `reqwest` aceita em [`reqwest::ClientBuilder::tls_certs_only`]. Parsing puro, sem
+/// nenhuma dependência de plataforma — testável em qualquer host, mesmo que só
+/// [`android_client_builder`] o use em produção.
+#[cfg(any(target_os = "android", test))]
+fn embedded_root_certs() -> &'static [reqwest::Certificate] {
+    static ROOTS: OnceLock<Vec<reqwest::Certificate>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|der| reqwest::Certificate::from_der(der.as_ref()).ok())
+            .collect()
+    })
+}
+
+/// No Android, a verificação de certificado do `rustls` (dependência transitiva do `reqwest`)
+/// delega ao verificador de plataforma via JNI (`rustls-platform-verifier`): sem uma
+/// inicialização que o app não faz, a primeira chamada pânica o worker tokio e todo caminho de
+/// rede do núcleo (OAuth, Sheets, snapshot no Drive, Mia em nuvem) fica inoperante. Em vez de
+/// acoplar o núcleo à ponte JNI e ao componente Gradle/Kotlin que o verificador de plataforma
+/// exige, trocamos a confiança no sistema pela lista de raízes da Mozilla embutida no binário —
+/// sem JNI, cobre os hosts do Google e do OpenRouter que o núcleo fala. Fora do Android é
+/// passagem direta: o verificador de plataforma nativo (Keychain/Credential Manager/libsecret)
+/// segue como está, com a vantagem de honrar CA corporativa/de usuário que o desktop já tem.
+#[cfg(target_os = "android")]
+pub(crate) fn android_client_builder(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder.tls_certs_only(embedded_root_certs().iter().cloned())
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn android_client_builder(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder
 }
 
 /// `true` para erros de transporte que valem retentativa (conexão/timeout/envio). Status HTTP NÃO
@@ -86,5 +122,23 @@ pub async fn send_with_retry(
                 attempt += 1;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod android_tls_tests {
+    use super::embedded_root_certs;
+
+    /// A decisão de fiação (`android_client_builder`) só se prova no aparelho — mas o parsing das
+    /// raízes embutidas é puro e testável aqui: se `webpki-root-certs` mudar de formato ou algum
+    /// DER parar de decodificar, este teste pega antes do build Android.
+    #[test]
+    fn as_raizes_embutidas_da_mozilla_analisam_sem_erro_e_nao_ficam_vazias() {
+        let certs = embedded_root_certs();
+        assert!(
+            certs.len() > 100,
+            "esperava a lista cheia de raízes da Mozilla, achei {}",
+            certs.len()
+        );
     }
 }

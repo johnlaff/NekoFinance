@@ -2817,6 +2817,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "uuid",
+ "webpki-root-certs",
  "zip 8.6.0",
 ]
 
