@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Matches the graphite tile base (src-tauri/icons/icon-source.svg gradient stop #0e1413):
+       the foreground layer already fills the safe zone with the tile, so this color only
+       shows through corners some launcher masks reveal — white there reads as a seam. -->
+  <color name="ic_launcher_background">#0e1413</color>
+</resources>
