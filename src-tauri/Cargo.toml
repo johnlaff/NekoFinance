@@ -56,7 +56,9 @@ reqwest = { version = "0.13", features = ["json", "form", "query"] }
 # (`http::android_client_builder`), no lugar do verificador de plataforma padrão do `reqwest`
 # (`rustls-platform-verifier`), que no Android exige uma ponte JNI+Gradle que o app não tem. O
 # crate em si não depende de plataforma nenhuma, então fica em `[dependencies]` normal para o
-# parsing (`embedded_root_certs`) ser testável em qualquer host.
+# parsing (`embedded_root_certs`) ser testável em qualquer host. As trocas dessa rota (raízes
+# presas na versão do build, sem CRL/OCSP, sem CA corporativa/de usuário no Android) e quando
+# revalidá-las estão documentadas no doc comment de `android_client_builder` (verificado 2026-08).
 webpki-root-certs = "1"
 open = "5"
 rand = "0.10"

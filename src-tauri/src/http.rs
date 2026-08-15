@@ -21,17 +21,36 @@ const MAX_RETRY_WAIT: Duration = Duration::from_secs(10);
 /// chamada reconstruía o cliente e refazia o handshake TLS (até ~24 por import anual).
 pub fn client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            android_client_builder(
-                reqwest::Client::builder()
-                    .connect_timeout(CONNECT_TIMEOUT)
-                    .timeout(REQUEST_TIMEOUT),
-            )
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-        })
-        .clone()
+    CLIENT.get_or_init(build_client).clone()
+}
+
+fn build_client() -> reqwest::Client {
+    android_client_builder(
+        reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT),
+    )
+    .build()
+    .unwrap_or_else(on_build_failure)
+}
+
+/// Fora do Android, degradar para o cliente default do `reqwest` é uma perda aceitável — mesmo
+/// verificador de plataforma nativo do SO, só sem os timeouts desta sessão.
+#[cfg(not(target_os = "android"))]
+fn on_build_failure(_error: reqwest::Error) -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+/// No Android, essa degradação é exatamente o bug desta issue: `reqwest::Client::new()` volta a
+/// usar a config default, cujo verificador de plataforma pânica sem a inicialização JNI que o
+/// app não faz (`rustls-platform-verifier`, ver [`android_client_builder`]) — e a `OnceLock` de
+/// [`client`] congelaria essa escolha ruim pela sessão inteira, disfarçando o pânico real (na
+/// primeira request) atrás de um cliente que parece funcional. Falha de `.build()` aqui só pode
+/// vir de um bug de empacotamento (ex.: [`embedded_root_certs`] vazio) — pânica alto e cedo, na
+/// construção, em vez de mascarar.
+#[cfg(target_os = "android")]
+fn on_build_failure(error: reqwest::Error) -> reqwest::Client {
+    panic!("cliente HTTP do Android sem raízes embutidas — bug de build: {error}")
 }
 
 /// Raízes de CA da Mozilla embutidas no binário (`webpki-root-certs`), convertidas para o tipo
@@ -58,6 +77,18 @@ fn embedded_root_certs() -> &'static [reqwest::Certificate] {
 /// sem JNI, cobre os hosts do Google e do OpenRouter que o núcleo fala. Fora do Android é
 /// passagem direta: o verificador de plataforma nativo (Keychain/Credential Manager/libsecret)
 /// segue como está, com a vantagem de honrar CA corporativa/de usuário que o desktop já tem.
+///
+/// Três trocas conscientes dessa rota, válidas **só no Android** (verificado 2026-08 — revalidar
+/// a cada bump do `webpki-root-certs`, ou antes de publicar o app numa loja):
+/// 1. As raízes ficam presas na versão embutida em tempo de compilação — não seguem a lista da
+///    Mozilla até o próximo rebuild/release, ao contrário do verificador de plataforma (que lê o
+///    trust store do SO, atualizado pelo sistema).
+/// 2. Sem dado de revogação: `tls_certs_only` faz verificação de cadeia pura (webpki), sem CRL/
+///    OCSP — o verificador de plataforma consultaria o SO para isso.
+/// 3. CA corporativa ou instalada manualmente pelo usuário no aparelho deixa de valer para o
+///    núcleo (o app não passa mais pelo trust store do Android). Sideload-only (ADR-0014) torna
+///    isso aceitável hoje; reconsiderar a rota (a) — inicialização JNI do verificador de
+///    plataforma — se o app algum dia precisar honrar esse tipo de CA no Android.
 #[cfg(target_os = "android")]
 pub(crate) fn android_client_builder(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     builder.tls_certs_only(embedded_root_certs().iter().cloned())
@@ -130,15 +161,18 @@ mod android_tls_tests {
     use super::embedded_root_certs;
 
     /// A decisão de fiação (`android_client_builder`) só se prova no aparelho — mas o parsing das
-    /// raízes embutidas é puro e testável aqui: se `webpki-root-certs` mudar de formato ou algum
-    /// DER parar de decodificar, este teste pega antes do build Android.
+    /// raízes embutidas é puro e testável aqui. Igualdade EXATA com o tamanho da lista fonte, não
+    /// só "não vazia": `embedded_root_certs` descarta em silêncio (`filter_map(...ok())`) qualquer
+    /// DER que o `reqwest` recuse — sem essa contagem exata, um bump do `webpki-root-certs` que
+    /// passasse a exportar uma raiz num formato que o `reqwest` não decodifica reduziria a lista
+    /// de confiança sem quebrar teste nenhum.
     #[test]
-    fn as_raizes_embutidas_da_mozilla_analisam_sem_erro_e_nao_ficam_vazias() {
+    fn as_raizes_embutidas_da_mozilla_analisam_sem_perder_nenhuma() {
         let certs = embedded_root_certs();
-        assert!(
-            certs.len() > 100,
-            "esperava a lista cheia de raízes da Mozilla, achei {}",
-            certs.len()
+        assert_eq!(
+            certs.len(),
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS.len(),
+            "uma ou mais raízes da lista fonte não decodificaram como reqwest::Certificate"
         );
     }
 }
