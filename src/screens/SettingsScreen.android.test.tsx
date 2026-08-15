@@ -17,6 +17,7 @@ vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal()),
   isAndroid: true,
   GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
+  GOOGLE_OAUTH_CLIENT_ID: "test-android-client-id.apps.googleusercontent.com",
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({

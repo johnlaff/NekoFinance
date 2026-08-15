@@ -1,22 +1,37 @@
 //! Onde o Google devolve o `code` do consentimento — loopback HTTP no desktop, deep link do
-//! esquema próprio do app no Android (ADR-0014, cláusula 2). O PKCE por baixo dos dois nunca
-//! muda; só a porta de retorno do `code` varia por plataforma, e este módulo é a fonte única do
-//! `redirect_uri` que `pkce::OAuthState::build_auth_url` anuncia no consentimento e que
+//! esquema reverso da credencial Android no Android (ADR-0014, cláusula 2). O PKCE por baixo dos
+//! dois nunca muda; só a porta de retorno do `code` varia por plataforma, e este módulo é a fonte
+//! única do `redirect_uri` que `pkce::OAuthState::build_auth_url` anuncia no consentimento e que
 //! `oauth::exchange_token` repete na troca — os dois precisam casar byte a byte (RFC 6749 §3.1.2.3).
 
-/// Esquema do deep link de retorno do OAuth no Android — o identificador de bundle já registrado
-/// (`app.neko.finance`, `tauri.conf.json > identifier`), não um App Link com domínio verificado:
-/// a distribuição é sideload, sem site para hospedar a verificação. Precisa casar
-/// literalmente com `tauri.conf.json > plugins > deep-link > mobile[0].scheme` — o JSON não
-/// enxerga esta constante, então uma mudança aqui precisa do mesmo commit lá (é isso que faz o
-/// `AndroidManifest.xml` gerado aceitar o intent e o Kotlin do plugin reconhecer a URL como
-/// deep link).
-pub const ANDROID_OAUTH_SCHEME: &str = "app.neko.finance";
+/// Esquema do deep link de retorno do OAuth no Android — o CLIENT ID REVERSO da credencial Google
+/// de tipo Android (`50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g.apps.googleusercontent.com`),
+/// não o identificador de bundle do app. A política do Google só aceita redirect de esquema
+/// customizado para esse tipo de credencial — ela valida o app pelo par (pacote, SHA-1) já
+/// registrado no Console (`docs/building-android.md`), e o esquema tem que ser literalmente o
+/// client id de trás para frente (é assim que o Google associa o retorno à credencial, sem
+/// precisar de um domínio verificado — a distribuição é sideload, sem site para hospedar a
+/// verificação de um App Link). Precisa casar com `tauri.conf.json > plugins > deep-link >
+/// mobile[0].scheme` — o JSON não enxerga esta constante, então uma mudança aqui precisa do mesmo
+/// commit lá (é isso que faz o `AndroidManifest.xml` gerado aceitar o intent e o Kotlin do plugin
+/// reconhecer a URL como deep link).
+pub const ANDROID_OAUTH_SCHEME: &str =
+    "com.googleusercontent.apps.50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g";
 
-/// Host do deep link — só dá um caminho estável ao `redirect_uri`; o esquema já é exclusivo do
-/// app, então nenhum outro host precisa ser aceito. Mesma ressalva de sincronia manual com
-/// `tauri.conf.json > plugins > deep-link > mobile[0].host`.
-pub const ANDROID_OAUTH_HOST: &str = "oauth-callback";
+/// Path do deep link — o formato documentado pelo Google para o esquema customizado de um cliente
+/// instalado (`REVERSED_CLIENT_ID:/oauth2redirect`, um único `/`: sem autoridade, só path). Mesma
+/// ressalva de sincronia manual com `tauri.conf.json > plugins > deep-link > mobile[0].path`.
+pub const ANDROID_OAUTH_PATH: &str = "/oauth2redirect";
+
+/// Verdadeiro quando `scheme` é o esquema do retorno do OAuth Android — o mesmo predicado que
+/// `commands::oauth_cmds::register_deep_link_listener` usa para filtrar o evento do plugin,
+/// extraído aqui para testar sem depender do plugin Tauri real nem do target Android. Só chamada
+/// em produção pelo shell Android (código morto por desenho nos demais alvos — os testes abaixo
+/// exercem a função sem depender do target real).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn is_oauth_callback_scheme(scheme: &str) -> bool {
+    scheme == ANDROID_OAUTH_SCHEME
+}
 
 /// Onde o `code` do consentimento chega até o processo. O mesmo PKCE (`OAuthState`) funciona com
 /// qualquer uma das duas — só o `redirect_uri` anunciado ao Google e o mecanismo de captura mudam.
@@ -45,7 +60,7 @@ impl RedirectStrategy {
         match self {
             RedirectStrategy::Loopback { port } => format!("http://127.0.0.1:{port}"),
             RedirectStrategy::DeepLink => {
-                format!("{ANDROID_OAUTH_SCHEME}://{ANDROID_OAUTH_HOST}")
+                format!("{ANDROID_OAUTH_SCHEME}:{ANDROID_OAUTH_PATH}")
             }
         }
     }
@@ -64,11 +79,27 @@ mod tests {
     }
 
     #[test]
-    fn deep_link_redirect_uri_usa_o_esquema_do_app() {
+    fn deep_link_redirect_uri_usa_o_esquema_reverso_da_credencial_android() {
         assert_eq!(
             RedirectStrategy::DeepLink.redirect_uri(),
-            "app.neko.finance://oauth-callback"
+            "com.googleusercontent.apps.50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g:/oauth2redirect"
         );
+    }
+
+    #[test]
+    fn is_oauth_callback_scheme_aceita_o_esquema_reverso_da_credencial_android() {
+        assert!(is_oauth_callback_scheme(
+            "com.googleusercontent.apps.50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g"
+        ));
+    }
+
+    #[test]
+    fn is_oauth_callback_scheme_rejeita_outros_esquemas() {
+        // O esquema antigo (identificador de bundle) nunca funcionou — a política do Google exige
+        // o client id reverso para credenciais de tipo Android.
+        assert!(!is_oauth_callback_scheme("app.neko.finance"));
+        assert!(!is_oauth_callback_scheme("https"));
+        assert!(!is_oauth_callback_scheme(""));
     }
 
     #[test]

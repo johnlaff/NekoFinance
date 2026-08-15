@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Button } from "../../design-system/components/Button";
 import { EmptyState } from "../../design-system/components/EmptyState";
-import { GOOGLE_CLIENT_ID } from "../../lib/env";
+import { GOOGLE_OAUTH_CLIENT_ID } from "../../lib/env";
 import { errorText, safeErrorMessage } from "../../lib/errors";
 import { invalidateCommands } from "../../lib/useCommand";
 import { closeSnapshotConflict } from "./snapshotConflictStore";
@@ -164,7 +164,7 @@ export function SnapshotConflictScreen() {
   // pelo estado inicial do `useState`, e o chamador de recuperação (dentro de `resolve`, um
   // manipulador de evento, não um efeito) seta a fase ANTES de invocar isto.
   function loadDetails(staleNotice?: string) {
-    fetchSnapshotConflictDetails(GOOGLE_CLIENT_ID)
+    fetchSnapshotConflictDetails(GOOGLE_OAUTH_CLIENT_ID)
       .then((details) => {
         // `exactOptionalPropertyTypes` distingue "propriedade ausente" de "propriedade
         // presente com valor `undefined`" — o spread condicional constrói o objeto sem a chave
@@ -195,7 +195,7 @@ export function SnapshotConflictScreen() {
     setPhase({ kind: "resolving", details, choice });
     try {
       const result = await resolveSnapshotConflictCmd(
-        GOOGLE_CLIENT_ID,
+        GOOGLE_OAUTH_CLIENT_ID,
         choice,
         details.remote_manifest.sequence,
       );

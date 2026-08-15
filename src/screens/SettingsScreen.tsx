@@ -30,7 +30,7 @@ import { WriteBackPending } from "./dashboard/WriteBackPending";
 import { useWriteBackPending } from "../hooks/useWriteBackPending";
 import { ACCENTS, applyAccent, getStoredAccent, type Accent } from "../lib/accent";
 import { useNekoApp } from "../shell/appContext";
-import { GOOGLE_CLIENT_ID, isAndroid, isTauri, SHOW_RECEIPT } from "../lib/env";
+import { GOOGLE_OAUTH_CLIENT_ID, isAndroid, isTauri, SHOW_RECEIPT } from "../lib/env";
 import {
   motionEnabled,
   setMotionPreference,
@@ -854,13 +854,13 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
   const unpublishedNote = driveUnpublishedChangesNote(info);
 
   async function doCheckin() {
-    if (!GOOGLE_CLIENT_ID) return;
+    if (!GOOGLE_OAUTH_CLIENT_ID) return;
     setErr(null);
     setNote(null);
     setNeedsReauth(false);
     setBusy(true);
     try {
-      const result = await driveCheckinCmd(GOOGLE_CLIENT_ID);
+      const result = await driveCheckinCmd(GOOGLE_OAUTH_CLIENT_ID);
       setBusy(false);
       // "Em dia" é sucesso (ADR-0015): nada foi publicado, mas o dono merece saber que o
       // clique não falhou — só não tinha nada de novo para subir.
@@ -918,7 +918,7 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
               variant="ghost"
               size="sm"
               onClick={() => void doCheckin()}
-              disabled={busy || !isTauri || !GOOGLE_CLIENT_ID}
+              disabled={busy || !isTauri || !GOOGLE_OAUTH_CLIENT_ID}
             >
               {busy ? "Publicando…" : "Fazer check-in"}
             </Button>
@@ -995,10 +995,10 @@ function useGoogleReconnect(
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
 
   function handleReconnect() {
-    if (!GOOGLE_CLIENT_ID || reconnecting) return;
+    if (!GOOGLE_OAUTH_CLIENT_ID || reconnecting) return;
     setReconnecting(true);
     setReconnectAttempts((n) => n + 1);
-    connectGoogleCmd(GOOGLE_CLIENT_ID)
+    connectGoogleCmd(GOOGLE_OAUTH_CLIENT_ID)
       .then(() => pollConnected(0))
       .then((status) => {
         onAuthChange(status);
@@ -1104,7 +1104,7 @@ export function SettingsScreen({
               size="sm"
               variant="ghost"
               onClick={() => handleReconnect()}
-              disabled={reconnecting || !GOOGLE_CLIENT_ID}
+              disabled={reconnecting || !GOOGLE_OAUTH_CLIENT_ID}
             >
               {reconnecting ? "Reconectando…" : "Reconectar"}
             </Button>

@@ -100,7 +100,53 @@ future release can no longer update the currently installed app; the only recove
 and reinstalling fresh, which drops local app data (`neko-finance.db` and the rest of the
 app-private storage).
 
-## 2. Building
+## 2. Registering the Google OAuth credential
+
+The Android consent flow needs a Google Cloud credential of **type Android** — Google's OAuth
+policy rejects a custom-scheme redirect from any other credential type ("Erro 400:
+invalid_request" on the consent screen is that rejection). An Android credential authenticates a
+build by the pair (package name, certificate SHA-1) instead of a shared secret, and PKCE alone
+secures the code exchange (`oauth::secret_for_exchange` never sends one on this path).
+
+Register one Android credential per signing key that will run a real consent flow (debug and
+release keystores produce different SHA-1 fingerprints — most maintainers register both) in the
+Google Cloud console: APIs & Services → Credentials → Create Credentials → OAuth client ID →
+Android, with:
+
+| Field | Value |
+| --- | --- |
+| Package name | `app.neko.finance` (the `applicationId`, same value the manifest and `adb install`/`uninstall` commands use) |
+| SHA-1 certificate fingerprint | from the signing keystore — see below |
+
+Get the fingerprint from the release keystore provisioned in step 1:
+
+```bash
+keytool -list -v -keystore ~/.local/share/neko-finance/neko-finance-release.jks -alias neko-finance | grep SHA1
+```
+
+or from the Android SDK's auto-generated debug keystore (used by unsigned `--debug` builds):
+
+```bash
+keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA1
+```
+
+The client id Google issues for an Android credential is **public** (unlike the Desktop
+credential's secret) and lives versioned in source, never in `.env` — a variable baked at build
+time already produced broken builds when it landed empty or mistyped. It appears in 4 places that
+have to stay byte-for-byte in sync (there is no single source of truth to derive the other three
+from — `scripts/check-android-oauth-client-id.mjs`, wired into `npm run check` via `npm run
+lint:android-oauth-client-id`, derives the reversed scheme from `GOOGLE_ANDROID_CLIENT_ID` and
+fails the moment one of the other three drifts):
+
+- `src/lib/env.ts` → `GOOGLE_ANDROID_CLIENT_ID`
+- `src-tauri/src/oauth/redirect.rs` → `ANDROID_OAUTH_SCHEME` (the same id, reversed — the
+  redirect scheme Google requires for a custom-URI installed app,
+  `REVERSED_CLIENT_ID:/oauth2redirect`)
+- `src-tauri/tauri.conf.json` → `plugins.deep-link.mobile[0].scheme` (same reversed id) and
+  `src-tauri/gen/android/app/src/main/AndroidManifest.xml` (the generated `<data
+  android:scheme>`/`<data android:path>` pair the deep-link plugin derives from it)
+
+## 3. Building
 
 ```bash
 npm run build:android            # release APK, aarch64 only (the reference device's ABI)
@@ -114,7 +160,7 @@ check fail with its real error if no JDK 21 is available), then runs `npx tauri 
 The built APK path is printed at the end; it also lives under
 `src-tauri/gen/android/app/build/outputs/apk/`.
 
-## 3. Installing and updating over ADB
+## 4. Installing and updating over ADB
 
 There is no Play Store and no in-app updater on this platform — every install and update is a
 manual ADB command, run inside the maintainer's private mesh (Tailscale) once the device is paired

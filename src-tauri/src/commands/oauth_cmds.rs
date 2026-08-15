@@ -159,7 +159,7 @@ pub(crate) fn register_deep_link_listener(app: &tauri::AppHandle) {
         let matched = event
             .urls()
             .into_iter()
-            .find(|url| url.scheme() == oauth::redirect::ANDROID_OAUTH_SCHEME);
+            .find(|url| oauth::redirect::is_oauth_callback_scheme(url.scheme()));
         let Some(url) = matched else { return };
 
         let code = url

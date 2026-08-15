@@ -63,6 +63,20 @@ impl OAuthConfig {
 /// embuti-lo no binário não amplia a exposição. Esta função LÊ o ambiente — pertence ao shell
 /// imperativo (chamada nos comandos), não ao core puro.
 pub fn resolve_client_secret(provided: Option<String>) -> Option<String> {
+    resolve_client_secret_for(provided, cfg!(target_os = "android"))
+}
+
+/// Núcleo de `resolve_client_secret`, parametrizado por `is_android` em vez de embutir `cfg!`
+/// direto no corpo — a credencial Android não tem client secret no Console, então nenhum valor
+/// pode entrar na troca/renovação nesse caminho, nem um herdado de OUTRA credencial (o secret
+/// Desktop, que `option_env!` embutiria no binário Android se o build compartilhasse o env do
+/// shell com o build Desktop). No host de teste `cfg!(target_os = "android")` nunca é `true`, daí
+/// o parâmetro explícito: é o mesmo padrão dual-plataforma de `redirect::RedirectStrategy` — um
+/// valor testável nos dois branches em vez de um `cfg` que só um target realmente exercita.
+fn resolve_client_secret_for(provided: Option<String>, is_android: bool) -> Option<String> {
+    if is_android {
+        return None;
+    }
     provided
         .filter(|s| !s.trim().is_empty())
         .or_else(|| std::env::var("GOOGLE_CLIENT_SECRET").ok())
@@ -198,5 +212,39 @@ mod tests {
         assert!(blank.client_secret.is_none());
         let none = OAuthConfig::google("id".into(), None);
         assert!(none.client_secret.is_none());
+    }
+
+    // `resolve_client_secret` chama `resolve_client_secret_for(provided, cfg!(target_os =
+    // "android"))` — no host de teste `cfg!` nunca é `true`, então o núcleo fica parametrizado
+    // para o branch Android ser exercitável aqui (mesmo padrão dual-plataforma de
+    // `RedirectStrategy`: valor explícito, não `cfg` escondido dentro da lógica).
+
+    #[test]
+    fn resolve_client_secret_for_zera_no_android_mesmo_com_secret_fornecido() {
+        // A credencial Android não tem client secret no Console — nenhum valor entra na
+        // renovação nesse caminho, nem um herdado de outra credencial (o secret Desktop pode
+        // vazar via `GOOGLE_CLIENT_SECRET` embutido no build por um env de shell compartilhado
+        // entre os dois targets).
+        let secret = resolve_client_secret_for(Some("secret-desktop-vazado".to_string()), true);
+        assert_eq!(secret, None);
+    }
+
+    #[test]
+    fn resolve_client_secret_for_zera_no_android_mesmo_sem_secret_fornecido() {
+        assert_eq!(resolve_client_secret_for(None, true), None);
+    }
+
+    #[test]
+    fn resolve_client_secret_for_preserva_o_fornecido_fora_do_android() {
+        let secret = resolve_client_secret_for(Some("s3cret".to_string()), false);
+        assert_eq!(secret.as_deref(), Some("s3cret"));
+    }
+
+    #[test]
+    fn resolve_client_secret_for_normaliza_secret_em_branco_para_none_fora_do_android() {
+        assert_eq!(
+            resolve_client_secret_for(Some("  ".to_string()), false),
+            None
+        );
     }
 }

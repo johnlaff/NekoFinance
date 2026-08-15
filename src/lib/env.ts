@@ -26,6 +26,27 @@ export const GOOGLE_CLIENT_ID =
   (import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string) ?? "";
 
 /**
+ * Client id da credencial Google de tipo Android — a política de OAuth do Google só aceita
+ * redirect de esquema customizado (o client id reverso, `oauth::redirect::ANDROID_OAUTH_SCHEME`
+ * no lado Rust) para esse tipo de credencial, nunca para a Desktop; ela valida o app pelo par
+ * (pacote, SHA-1) registrado no Console (`docs/building-android.md`), sem client secret. É
+ * identificador PÚBLICO, não um segredo — por isso entra fixo aqui em vez de em `.env`: uma
+ * variável assada em build já produziu builds Android quebrados por ausência/erro de digitação.
+ */
+export const GOOGLE_ANDROID_CLIENT_ID =
+  "50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g.apps.googleusercontent.com";
+
+/**
+ * Client id efetivamente usado no consentimento e em toda chamada que o repassa ao backend para
+ * renovar o token. O Android tem que enviar o MESMO client id que emitiu o `code`/`refresh_token`
+ * — misturar com o da credencial Desktop derruba a troca (`invalid_client`) ou o refresh
+ * (`invalid_grant`) em segundo plano.
+ */
+export const GOOGLE_OAUTH_CLIENT_ID = isAndroid
+  ? GOOGLE_ANDROID_CLIENT_ID
+  : GOOGLE_CLIENT_ID;
+
+/**
  * Chave da preferência de exibição do recibo, válida em todo o app. O nome persistido guarda
  * o prefixo da conversa, onde o recibo nasceu: renomeá-lo descartaria a escolha já gravada.
  */
