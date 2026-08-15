@@ -26,23 +26,77 @@ export function listenSnapshotSyncDone(
   return listenEvent<SnapshotSyncDonePayload>(SNAPSHOT_SYNC_DONE_EVENT, onDone);
 }
 
-/** Chave estável por conteúdo para as linhas da lista de gestos: o gesto não tem id próprio e
- *  dois gestos idênticos no mesmo segundo são possíveis — o sufixo de ocorrência desambigua sem
- *  depender do índice de render. `JSON.stringify` do array (nunca `join("|")`): `source_sheet` é
- *  dado do usuário e pode conter "|", o que colidiria duas linhas distintas na mesma chave. */
-export function gestureKeys(gestures: DriveConflictGesture[]): string[] {
+/** Chave estável por conteúdo, com sufixo de ocorrência para bases repetidas — a mesma
+ *  necessidade se repete para a lista crua de gestos (`gestureKeys`) e para a lista agrupada
+ *  (`groupKeys` abaixo): nenhum dos dois tem id próprio, e dois itens idênticos lado a lado são
+ *  possíveis. `JSON.stringify` do array (nunca `join("|")`): campos de texto livre do usuário
+ *  (`source_sheet`) podem conter "|", o que colidiria duas linhas distintas na mesma chave. */
+function contentKeys<T>(items: T[], toBaseFields: (item: T) => unknown[]): string[] {
   const seen = new Map<string, number>();
-  return gestures.map((gesture) => {
-    const base = JSON.stringify([
-      gesture.at,
-      gesture.event_type,
-      gesture.entity_type,
-      gesture.source_sheet ?? "",
-    ]);
+  return items.map((item) => {
+    const base = JSON.stringify(toBaseFields(item));
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     return n === 0 ? base : `${base}|${n}`;
   });
+}
+
+/** Chave estável por conteúdo para as linhas da lista de gestos: o gesto não tem id próprio e
+ *  dois gestos idênticos no mesmo segundo são possíveis — o sufixo de ocorrência desambigua sem
+ *  depender do índice de render. */
+export function gestureKeys(gestures: DriveConflictGesture[]): string[] {
+  return contentKeys(gestures, (gesture) => [
+    gesture.at,
+    gesture.event_type,
+    gesture.entity_type,
+    gesture.source_sheet ?? "",
+  ]);
+}
+
+/** Uma corrida de gestos CONSECUTIVOS com o mesmo rótulo de tipo (mesmo `event_type` +
+ *  `source_sheet` — os dois campos que `conflictGestureTypeLabel` imprime): `representative` é o
+ *  ÚLTIMO gesto da corrida (a lista chega em ordem de inserção crescente, então é o mais recente
+ *  dela) e `count` é o tamanho da corrida. */
+export interface GroupedConflictGesture {
+  representative: DriveConflictGesture;
+  count: number;
+}
+
+/** Agrupa corridas consecutivas de gestos com o mesmo rótulo de tipo numa única entrada com
+ *  contagem, em vez de repetir a mesma linha uma vez por gesto (issue #476: um import automático
+ *  recorrente da mesma aba gerava ~18 linhas idênticas na lista, inutilizando a rolagem em tela
+ *  pequena). Só agrupa gestos ADJACENTES: dois gestos idênticos separados por um gesto diferente
+ *  no meio formam corridas distintas — a posição real de cada um na sequência de sincronização
+ *  não se perde por trás de uma contagem só. */
+export function groupConsecutiveGestures(
+  gestures: DriveConflictGesture[],
+): GroupedConflictGesture[] {
+  const groups: GroupedConflictGesture[] = [];
+  for (const gesture of gestures) {
+    const last = groups[groups.length - 1];
+    if (
+      last?.representative.event_type === gesture.event_type &&
+      last.representative.source_sheet === gesture.source_sheet
+    ) {
+      last.representative = gesture;
+      last.count += 1;
+    } else {
+      groups.push({ representative: gesture, count: 1 });
+    }
+  }
+  return groups;
+}
+
+/** Chave estável por conteúdo para as linhas da lista JÁ AGRUPADA — mesma razão de ser de
+ *  `gestureKeys`, sobre o representante de cada corrida. */
+export function groupKeys(groups: GroupedConflictGesture[]): string[] {
+  return contentKeys(groups, (group) => [
+    group.representative.at,
+    group.representative.event_type,
+    group.representative.entity_type,
+    group.representative.source_sheet ?? "",
+    group.count,
+  ]);
 }
 
 export function fetchSnapshotConflictDetails(
@@ -137,6 +191,23 @@ export function conflictGestureDatedLabel(
   const recency = syncRecencyLabel(gesture.at, now);
   const type = conflictGestureTypeLabel(gesture);
   return recency ? `${type} — ${recency}` : `${type} — ${gesture.at}`;
+}
+
+/** Rótulo de uma corrida agrupada: o rótulo datado do representante (o gesto mais recente da
+ *  corrida) com a contagem inserida entre o tipo e o traço de recência — "Importação da planilha
+ *  (aba 2026) ×18 — há 6 h". Sem contagem quando a corrida tem um gesto só, para ler igual à
+ *  linha de sempre. Deriva de `conflictGestureDatedLabel` (nunca duplica a lógica de recência)
+ *  para as duas nunca divergirem no formato do traço final. */
+export function conflictGestureGroupLabel(
+  group: GroupedConflictGesture,
+  now?: number,
+): string {
+  const base = conflictGestureDatedLabel(group.representative, now);
+  if (group.count <= 1) return base;
+  const dashIndex = base.indexOf(" — ");
+  return dashIndex === -1
+    ? `${base} ×${group.count}`
+    : `${base.slice(0, dashIndex)} ×${group.count}${base.slice(dashIndex)}`;
 }
 
 /** Identifica de quem é o manifest remoto da disputa — mesmo padrão de

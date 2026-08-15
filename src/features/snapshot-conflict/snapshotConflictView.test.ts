@@ -3,8 +3,11 @@ import {
   AFTER_POOL_CLOSED_SUFFIX,
   CHECKIN_REFUSED_STALE_CONFLICT,
   conflictGestureDatedLabel,
+  conflictGestureGroupLabel,
   conflictGestureTypeLabel,
   conflictRemoteDeviceLabel,
+  groupConsecutiveGestures,
+  groupKeys,
   isAfterPoolClosedError,
   resolveConflictErrorMessage,
 } from "./snapshotConflictView";
@@ -122,6 +125,86 @@ describe("resolveConflictErrorMessage", () => {
     expect(resolveConflictErrorMessage(new Error(""))).toBe(
       "Não foi possível concluir a resolução do conflito.",
     );
+  });
+});
+
+describe("groupConsecutiveGestures", () => {
+  it("agrupa uma corrida consecutiva de mesmo event_type + source_sheet num único item", () => {
+    const gestures = Array.from({ length: 18 }, (_, i) =>
+      gesture({ at: `2026-08-12 0${(i % 9) + 1}:00:00`, source_sheet: "2026" }),
+    );
+    const groups = groupConsecutiveGestures(gestures);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ count: 18 });
+    // O representante é o ÚLTIMO gesto da corrida — a lista chega em ordem crescente de
+    // inserção, então é o mais recente dela.
+    expect(groups[0]!.representative).toBe(gestures[17]);
+  });
+
+  it("NÃO agrupa gestos idênticos separados por um gesto diferente no meio", () => {
+    const a = gesture({ event_type: "import", source_sheet: "2026" });
+    const b = gesture({ event_type: "write_back", source_sheet: "Saídas" });
+    const c = gesture({ event_type: "import", source_sheet: "2026" });
+    const groups = groupConsecutiveGestures([a, a, b, c]);
+    expect(groups.map((g) => g.count)).toEqual([2, 1, 1]);
+  });
+
+  it("gestos com o mesmo event_type mas source_sheet diferente ficam em corridas distintas", () => {
+    const groups = groupConsecutiveGestures([
+      gesture({ event_type: "import", source_sheet: "2026" }),
+      gesture({ event_type: "import", source_sheet: "2027" }),
+    ]);
+    expect(groups.map((g) => g.count)).toEqual([1, 1]);
+  });
+
+  it("lista vazia devolve nenhum grupo", () => {
+    expect(groupConsecutiveGestures([])).toEqual([]);
+  });
+});
+
+describe("conflictGestureGroupLabel", () => {
+  it("corrida de um gesto só lê IGUAL ao rótulo datado de sempre, sem contagem", () => {
+    const now = new Date("2026-08-12T09:18:00Z").getTime();
+    const g = gesture({ at: "2026-08-12 09:00:00", event_type: "import" });
+    expect(conflictGestureGroupLabel({ representative: g, count: 1 }, now)).toBe(
+      conflictGestureDatedLabel(g, now),
+    );
+  });
+
+  it("insere a contagem entre o rótulo do tipo e o traço de recência", () => {
+    const now = new Date("2026-08-12T15:00:00Z").getTime();
+    const g = gesture({
+      at: "2026-08-12 09:00:00",
+      event_type: "import",
+      source_sheet: "2026",
+    });
+    expect(conflictGestureGroupLabel({ representative: g, count: 18 }, now)).toBe(
+      "Importação da planilha (aba 2026) ×18 — há 6 h",
+    );
+  });
+});
+
+describe("groupKeys", () => {
+  it("nunca colide entre duas corridas com representantes distintos", () => {
+    const groups = groupConsecutiveGestures([
+      gesture({
+        at: "2026-08-12 09:00:00",
+        event_type: "import",
+        source_sheet: "2026",
+      }),
+      gesture({
+        at: "2026-08-12 09:01:00",
+        event_type: "import",
+        source_sheet: "2026",
+      }),
+      gesture({
+        at: "2026-08-12 09:02:00",
+        event_type: "write_back",
+        source_sheet: "Saídas",
+      }),
+    ]);
+    const keys = groupKeys(groups);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 
