@@ -61,6 +61,16 @@ pub async fn run_oauth_flow(
         return Err("state OAuth inválido (possível CSRF) — fluxo abortado".to_string());
     }
 
+    // A credencial Android (`RedirectStrategy::DeepLink`) não tem client secret no Console — só
+    // PKCE autentica a troca. Zeramos aqui, na única borda por onde todo `code` passa antes da
+    // troca, em vez de confiar que quem montou `config` já não incluiu um secret de outra
+    // credencial (a Desktop, cujo secret pode vazar por env de build compartilhado — ver
+    // `pkce::resolve_client_secret`).
+    let config = pkce::OAuthConfig {
+        client_secret: secret_for_exchange(config.client_secret, &state.redirect),
+        ..config
+    };
+
     // Exchange code for token
     let token = exchange_token(&config, &state, &code).await?;
 
@@ -68,6 +78,19 @@ pub async fn run_oauth_flow(
     token_store::store_token(&app_dir, &token)?;
 
     Ok(token)
+}
+
+/// O client secret que a troca do `code` deve enviar, dada a estratégia de redirect. Só o
+/// `Loopback` (Desktop) tem uma credencial com secret; o `DeepLink` (Android) nunca envia um,
+/// mesmo que `config_secret` traga algum valor.
+fn secret_for_exchange(
+    config_secret: Option<String>,
+    redirect: &redirect::RedirectStrategy,
+) -> Option<String> {
+    match redirect {
+        redirect::RedirectStrategy::DeepLink => None,
+        redirect::RedirectStrategy::Loopback { .. } => config_secret,
+    }
 }
 
 /// Compara dois bytes em tempo constante (não vaza onde diferem). Usado na checagem do state CSRF.
@@ -134,7 +157,8 @@ async fn exchange_token(
 
 #[cfg(test)]
 mod tests {
-    use super::{OAuthCallback, constant_time_eq};
+    use super::{OAuthCallback, constant_time_eq, secret_for_exchange};
+    use crate::oauth::redirect::RedirectStrategy;
 
     #[test]
     fn constant_time_eq_matches_only_identical() {
@@ -142,6 +166,41 @@ mod tests {
         assert!(!constant_time_eq(b"abc123", b"abc124")); // 1 byte diferente
         assert!(!constant_time_eq(b"abc", b"abc123")); // tamanhos diferentes
         assert!(!constant_time_eq(b"", b"x"));
+    }
+
+    // A credencial Android não tem client secret — a troca do `code` no caminho DeepLink nunca
+    // envia um, mesmo que `config` tenha chegado com um (ex.: vazamento do secret Desktop via env
+    // de build compartilhado). O Loopback (Desktop) segue passando o que recebeu, sem mudança.
+
+    #[test]
+    fn secret_for_exchange_zera_o_secret_no_caminho_deep_link() {
+        let secret = secret_for_exchange(
+            Some("secret-do-desktop-vazado".to_string()),
+            &RedirectStrategy::DeepLink,
+        );
+        assert_eq!(secret, None);
+    }
+
+    #[test]
+    fn secret_for_exchange_zera_mesmo_sem_secret_nenhum_no_caminho_deep_link() {
+        assert_eq!(secret_for_exchange(None, &RedirectStrategy::DeepLink), None);
+    }
+
+    #[test]
+    fn secret_for_exchange_preserva_o_secret_no_caminho_loopback() {
+        let secret = secret_for_exchange(
+            Some("secret-do-desktop".to_string()),
+            &RedirectStrategy::Loopback { port: 48080 },
+        );
+        assert_eq!(secret.as_deref(), Some("secret-do-desktop"));
+    }
+
+    #[test]
+    fn secret_for_exchange_preserva_ausencia_no_caminho_loopback() {
+        assert_eq!(
+            secret_for_exchange(None, &RedirectStrategy::Loopback { port: 48080 }),
+            None
+        );
     }
 
     // As duas variantes de `OAuthCallback` sobre o mesmo PKCE — o loopback já é exercido por

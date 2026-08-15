@@ -35,6 +35,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("../lib/env", async (importOriginal) => ({
   ...(await importOriginal<typeof Env>()),
   GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
+  GOOGLE_OAUTH_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({

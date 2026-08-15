@@ -12,7 +12,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { Button } from "../../design-system/components/Button";
-import { GOOGLE_CLIENT_ID } from "../../lib/env";
+import { GOOGLE_OAUTH_CLIENT_ID } from "../../lib/env";
 import { extractSpreadsheetId } from "../../lib/spreadsheet-url";
 import { safeErrorMessage } from "../../lib/errors";
 import { isEconomiaTab, isMetricTab } from "../../lib/sheet-tabs";
@@ -175,7 +175,7 @@ function useSheetImport(
   const loadSpreadsheets = async () => {
     await withLoading(setLoading, async () => {
       try {
-        const list = await fetchUserSpreadsheets(GOOGLE_CLIENT_ID);
+        const list = await fetchUserSpreadsheets(GOOGLE_OAUTH_CLIENT_ID);
         set({ spreadsheets: list });
       } catch {
         // Sem scope do Drive (token antigo) a listagem dá 403 — o campo de URL colada continua
@@ -186,7 +186,7 @@ function useSheetImport(
   };
 
   const handleConnect = async () => {
-    if (!GOOGLE_CLIENT_ID) {
+    if (!GOOGLE_OAUTH_CLIENT_ID) {
       // Detalhe técnico vai para o console, não para o usuário final.
       console.warn(
         "Conexão Google indisponível: VITE_GOOGLE_CLIENT_ID ausente no build.",
@@ -200,7 +200,7 @@ function useSheetImport(
     set({ error: null, errorDetail: null });
     await withLoading(setLoading, async () => {
       try {
-        await connectGoogleCmd(GOOGLE_CLIENT_ID);
+        await connectGoogleCmd(GOOGLE_OAUTH_CLIENT_ID);
         // O consentimento no navegador leva o tempo que o usuário levar — sondar até conectar (ou
         // desistir após 2 min). Sondagem é sequencial por natureza (espera → checa → repete), então
         // usamos recursão com setTimeout em vez de await-dentro-de-loop.
@@ -257,7 +257,7 @@ function useSheetImport(
     set({ selectedSpreadsheet: id, selectedSheet: "", preview: null, mappings: [] });
     await withLoading(setLoading, async () => {
       try {
-        const list = await fetchSheetNames(id, GOOGLE_CLIENT_ID);
+        const list = await fetchSheetNames(id, GOOGLE_OAUTH_CLIENT_ID);
         set({ sheets: list });
       } catch (e) {
         fail(e, "Não foi possível listar as abas.");
@@ -270,7 +270,7 @@ function useSheetImport(
     await withLoading(setLoading, async () => {
       try {
         const [prev, maps] = await Promise.all([
-          fetchSheetPreviewCmd(state.selectedSpreadsheet, name, GOOGLE_CLIENT_ID),
+          fetchSheetPreviewCmd(state.selectedSpreadsheet, name, GOOGLE_OAUTH_CLIENT_ID),
           fetchSheetMappings(name).catch(() => [] as SheetMappingEntry[]),
         ]);
         set({ preview: prev, mappings: maps, step: "preview" });
@@ -286,7 +286,7 @@ function useSheetImport(
         await detectSheetLayoutCmd(
           state.selectedSpreadsheet,
           state.selectedSheet,
-          GOOGLE_CLIENT_ID,
+          GOOGLE_OAUTH_CLIENT_ID,
         );
         const maps = await fetchSheetMappings(state.selectedSheet);
         set({ mappings: maps, step: "mapping" });
@@ -323,7 +323,8 @@ function useSheetImport(
         await setSheetsSetting(LAST_SHEET_KEY, state.selectedSheet);
       // O client id vive no build do frontend; a tarefa de sync em segundo plano (sem estado da UI)
       // precisa dele para renovar o token. Persistimos junto da última importação.
-      if (GOOGLE_CLIENT_ID) await setSheetsSetting(CLIENT_ID_KEY, GOOGLE_CLIENT_ID);
+      if (GOOGLE_OAUTH_CLIENT_ID)
+        await setSheetsSetting(CLIENT_ID_KEY, GOOGLE_OAUTH_CLIENT_ID);
     } catch {
       // Best-effort: o atalho some até a próxima importação, sem quebrar o import.
     }
@@ -351,7 +352,7 @@ function useSheetImport(
           spreadsheetId,
           sheetName,
           profileId,
-          GOOGLE_CLIENT_ID,
+          GOOGLE_OAUTH_CLIENT_ID,
         );
         invalidateCommands(); // finance numbers changed — drop every cached screen
         await persistLastImport(spreadsheetId);
@@ -380,7 +381,7 @@ function useSheetImport(
       try {
         let sheets = state.sheets;
         if (sheets.length === 0 || state.selectedSpreadsheet !== spreadsheetId) {
-          sheets = await fetchSheetNames(spreadsheetId, GOOGLE_CLIENT_ID);
+          sheets = await fetchSheetNames(spreadsheetId, GOOGLE_OAUTH_CLIENT_ID);
           set({ selectedSpreadsheet: spreadsheetId, sheets });
         }
         const profileId = crypto.randomUUID();
@@ -396,13 +397,16 @@ function useSheetImport(
           if (i >= sheets.length) return acc;
           const s = sheets[i]!;
           if (isEconomiaTab(s.title)) {
-            acc.econ += await importEconomiaSheetCmd(spreadsheetId, GOOGLE_CLIENT_ID);
+            acc.econ += await importEconomiaSheetCmd(
+              spreadsheetId,
+              GOOGLE_OAUTH_CLIENT_ID,
+            );
           } else if (!isMetricTab(s.title)) {
             const outcome = await importSheetDataCmd(
               spreadsheetId,
               s.title,
               profileId,
-              GOOGLE_CLIENT_ID,
+              GOOGLE_OAUTH_CLIENT_ID,
             );
             acc.txns += outcome.count;
             acc.diagnostics.push(...outcome.diagnostics);
@@ -450,7 +454,7 @@ function useSheetImport(
       try {
         const count = await importEconomiaSheetCmd(
           state.selectedSpreadsheet,
-          GOOGLE_CLIENT_ID,
+          GOOGLE_OAUTH_CLIENT_ID,
         );
         invalidateCommands();
         await persistLastImport(state.selectedSpreadsheet);
@@ -920,7 +924,7 @@ function MappingStep({
       <WriteBackPreview
         spreadsheetId={selectedSpreadsheet}
         sheetName={selectedSheet}
-        clientId={GOOGLE_CLIENT_ID}
+        clientId={GOOGLE_OAUTH_CLIENT_ID}
       />
     </div>
   );
@@ -949,7 +953,7 @@ function ConnectView({
         <Button
           variant="primary"
           onClick={onConnect}
-          disabled={loading || !GOOGLE_CLIENT_ID}
+          disabled={loading || !GOOGLE_OAUTH_CLIENT_ID}
         >
           {loading ? (
             <Loader2 size={14} className="gs-spin" strokeWidth={1.75} />
@@ -958,7 +962,7 @@ function ConnectView({
           )}
           {loading ? "Conectando…" : "Conectar Google"}
         </Button>
-        {!GOOGLE_CLIENT_ID && (
+        {!GOOGLE_OAUTH_CLIENT_ID && (
           <p className="gs-connect__hint">
             Conexão Google indisponível nesta instalação — use a importação de arquivo
             .xlsx abaixo.

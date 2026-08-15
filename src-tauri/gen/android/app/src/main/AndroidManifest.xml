@@ -29,12 +29,12 @@
                 <action android:name="org.chromium.arc.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="app.neko.finance" />
-                <data android:host="oauth-callback" />
-                
-                
-                
-                
+                <data android:scheme="com.googleusercontent.apps.50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g" />
+
+                <data android:path="/oauth2redirect" />
+
+
+
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>

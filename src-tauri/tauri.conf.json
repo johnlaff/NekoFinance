@@ -52,8 +52,10 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": ["app.neko.finance"],
-          "host": "oauth-callback"
+          "scheme": [
+            "com.googleusercontent.apps.50282483752-h53glgfl0laqe0t3rtqsj5a9sgc6b60g"
+          ],
+          "path": ["/oauth2redirect"]
         }
       ]
     }
