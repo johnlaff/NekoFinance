@@ -473,6 +473,9 @@
   width: 100%;
   max-width: none;
   max-height: 85dvh;
+  /* Defesa contra o mesmo defeito da issue #476: sem rolagem própria, uma lista de filtros que
+     crescesse além do teto vazaria por baixo do cartão em vez de ficar acessível por scroll. */
+  overflow-y: auto;
   border: 0;
   border-top: var(--bw-hair) solid var(--border);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;

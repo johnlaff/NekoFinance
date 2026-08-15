@@ -7,10 +7,11 @@ import { invalidateCommands } from "../../lib/useCommand";
 import { closeSnapshotConflict } from "./snapshotConflictStore";
 import {
   CHECKIN_REFUSED_STALE_CONFLICT,
-  conflictGestureDatedLabel,
+  conflictGestureGroupLabel,
   conflictRemoteDeviceLabel,
   fetchSnapshotConflictDetails,
-  gestureKeys,
+  groupConsecutiveGestures,
+  groupKeys,
   isAfterPoolClosedError,
   resolveConflictErrorMessage,
   resolveSnapshotConflictCmd,
@@ -27,7 +28,11 @@ import {
 const OVERLAY_STYLE: CSSProperties = {
   position: "fixed",
   inset: 0,
-  zIndex: 60,
+  // Acima do dock flutuante do shell mobile (`.sh-dock`, `z-index: 70`, só existe ≤700px): sem
+  // isto o dock (Hoje/Lançamentos/…/FAB) desenha POR CIMA do rodapé de ações deste cartão em
+  // qualquer viewport estreito — o defeito real por trás da issue #476 no aparelho, uma
+  // sobreposição de camadas que nenhum ajuste de `max-height`/rolagem resolve sozinho.
+  zIndex: 90,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -42,27 +47,64 @@ const OVERLAY_STYLE: CSSProperties = {
   backdropFilter: "blur(8px)",
 };
 
+// `dvh`, nunca `vh`: no WebView Android as barras de sistema (endereço/navegação) somem e voltam
+// enquanto o dono rola — `vh` mede contra o viewport GRANDE (barras escondidas), então `92vh` pode
+// exceder a área realmente visível quando as barras estão à mostra. `dvh` acompanha o viewport
+// DINÂMICO atual (issue #476: a lista de gestos empurrou os botões de escolha para fora da tela, e
+// como não havia rodapé próprio para as ações, não existia rolagem que os alcançasse).
 const CARD_STYLE: CSSProperties = {
   width: "100%",
   maxWidth: 520,
-  maxHeight: "92vh",
-  overflowY: "auto",
+  maxHeight: "92dvh",
   outline: "none",
   background: "var(--surface-elevated)",
   border: "var(--bw-hair) solid var(--border-strong)",
   borderRadius: "var(--radius-xl)",
   boxShadow: "var(--shadow-4)",
-  padding: "var(--space-7)",
-  display: "grid",
-  gap: "var(--space-4)",
+  display: "flex",
+  flexDirection: "column",
+  // Sem isto um filho flex nunca encolhe abaixo do tamanho do seu CONTEÚDO (default
+  // `min-height: auto`) — o corpo rolável ignoraria `maxHeight` do cartão e cresceria com a
+  // lista, empurrando o rodapé de ações para fora de novo.
+  minHeight: 0,
 };
 
+// Cabeçalho e rodapé NUNCA rolam — só o corpo entre eles. As ações do rodapé (regra 21 do
+// ui-standards, adaptada de "sticky" para "fora da área rolável"): visíveis sempre, nunca atrás de
+// uma rolagem que a lista de gestos possa esgotar antes de chegar lá.
+const CARD_HEADER_STYLE: CSSProperties = {
+  flex: "0 0 auto",
+  padding: "var(--space-7) var(--space-7) 0",
+};
+
+const CARD_BODY_STYLE: CSSProperties = {
+  flex: "1 1 auto",
+  minHeight: 0,
+  overflowY: "auto",
+  display: "grid",
+  gap: "var(--space-4)",
+  padding: "var(--space-5) var(--space-7)",
+};
+
+const CARD_FOOTER_STYLE: CSSProperties = {
+  flex: "0 0 auto",
+  display: "grid",
+  gap: "var(--space-3)",
+  padding: "var(--space-5) var(--space-7) var(--space-7)",
+  borderTop: "var(--bw-hair) solid var(--border-strong)",
+};
+
+// Contenção própria por lista (issue #476): sem ela, uma corrida longa de gestos consome sozinha
+// todo o corpo rolável do cartão, empurrando a segunda lista (e a copy entre elas) para fora da
+// vista antes mesmo de chegar ao rodapé. `dvh` pela mesma razão do cartão — nunca `vh`.
 const LIST_STYLE: CSSProperties = {
   display: "grid",
   gap: "var(--space-2)",
   margin: 0,
   padding: 0,
   listStyle: "none",
+  maxHeight: "min(288px, 34dvh)",
+  overflowY: "auto",
 };
 
 const ITEM_STYLE: CSSProperties = {
@@ -99,7 +141,11 @@ function GestureList({
   gestures: DriveConflictGesture[];
   emptyText: string;
 }) {
-  const keys = gestureKeys(gestures);
+  // Corridas consecutivas do mesmo tipo de gesto colapsam numa linha com contagem — sem isto, um
+  // import automático recorrente da mesma aba (o caso real da issue #476, ~18 vezes) repete a
+  // MESMA frase uma vez por gesto, sem levar informação nova a cada linha.
+  const groups = groupConsecutiveGestures(gestures);
+  const keys = groupKeys(groups);
   return (
     <section aria-label={title} style={{ display: "grid", gap: "var(--space-2)" }}>
       <h3 style={GESTURE_LIST_HEADING_STYLE}>
@@ -111,9 +157,9 @@ function GestureList({
         </p>
       ) : (
         <ul style={LIST_STYLE}>
-          {gestures.map((gesture, i) => (
+          {groups.map((group, i) => (
             <li key={keys[i]} style={ITEM_STYLE}>
-              {conflictGestureDatedLabel(gesture)}
+              {conflictGestureGroupLabel(group)}
             </li>
           ))}
         </ul>
@@ -259,101 +305,113 @@ export function SnapshotConflictScreen() {
       style={OVERLAY_STYLE}
     >
       <div ref={cardRef} tabIndex={-1} style={CARD_STYLE}>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: "var(--fs-h3)",
-            fontWeight: "var(--fw-bold)",
-            color: "var(--text-strong)",
-          }}
-        >
-          Os dois aparelhos mudaram desde a última vez que se falaram
-        </h2>
+        <div style={CARD_HEADER_STYLE}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: "var(--fs-h3)",
+              fontWeight: "var(--fw-bold)",
+              color: "var(--text-strong)",
+            }}
+          >
+            Os dois aparelhos mudaram desde a última vez que se falaram
+          </h2>
+        </div>
 
-        {phase.kind === "loading" && (
-          <EmptyState
-            variant="loading"
-            description="Buscando o que mudou em cada lado…"
-          />
-        )}
+        <div style={CARD_BODY_STYLE}>
+          {phase.kind === "loading" && (
+            <EmptyState
+              variant="loading"
+              description="Buscando o que mudou em cada lado…"
+            />
+          )}
 
-        {phase.kind === "load-error" && (
-          <EmptyState
-            variant="error"
-            title="Não foi possível carregar o conflito"
-            description={phase.message}
-            action={
-              <Button size="sm" variant="ghost" onClick={() => closeSnapshotConflict()}>
-                Fechar
-              </Button>
-            }
-          />
-        )}
+          {phase.kind === "load-error" && (
+            <EmptyState
+              variant="error"
+              title="Não foi possível carregar o conflito"
+              description={phase.message}
+              action={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => closeSnapshotConflict()}
+                >
+                  Fechar
+                </Button>
+              }
+            />
+          )}
 
-        {phase.kind === "restart-required" && (
-          <EmptyState
-            title="Feche e abra o Neko Finance de novo"
-            description="Os dados do outro aparelho já estão prontos neste — o app precisa reiniciar para
-              voltar a funcionar com eles."
-          />
-        )}
+          {phase.kind === "restart-required" && (
+            <EmptyState
+              title="Feche e abra o Neko Finance de novo"
+              description="Os dados do outro aparelho já estão prontos neste — o app precisa reiniciar para
+                voltar a funcionar com eles."
+            />
+          )}
 
-        {phase.kind === "restart-required-error" && (
-          <EmptyState
-            variant="error"
-            title="Reinicie o Neko Finance"
-            description={phase.message}
-          />
-        )}
+          {phase.kind === "restart-required-error" && (
+            <EmptyState
+              variant="error"
+              title="Reinicie o Neko Finance"
+              description={phase.message}
+            />
+          )}
 
-        {details && (
-          <>
-            {staleNotice && (
+          {details && (
+            <>
+              {staleNotice && (
+                <p
+                  role="status"
+                  style={{
+                    margin: 0,
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {staleNotice}
+                </p>
+              )}
+
               <p
                 role="status"
-                style={{
-                  margin: 0,
-                  fontSize: "var(--fs-sm)",
-                  color: "var(--text-muted)",
-                }}
+                style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text)" }}
               >
-                {staleNotice}
+                Isto é{" "}
+                {conflictRemoteDeviceLabel(
+                  details.remote_manifest,
+                  details.this_device_id,
+                )}
+                . As listas abaixo cobrem só importações e escritas na planilha — split,
+                tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui.
+                Os horários do lado do outro aparelho vêm do relógio dele, não deste.
               </p>
-            )}
 
-            <p
-              role="status"
-              style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text)" }}
-            >
-              Isto é{" "}
-              {conflictRemoteDeviceLabel(
-                details.remote_manifest,
-                details.this_device_id,
+              <GestureList
+                title="Gestos deste aparelho"
+                hint="perdidos se você usar o outro aparelho"
+                gestures={details.local_gestures}
+                emptyText="Não há registro de importação ou escrita na planilha neste aparelho desde a última base em comum."
+              />
+              <GestureList
+                title="Gestos do outro aparelho"
+                hint="perdidos se você mantiver este aparelho"
+                gestures={details.remote_gestures}
+                emptyText="Não há registro de importação ou escrita na planilha no outro aparelho desde a última base em comum."
+              />
+
+              {resolveError && (
+                <p role="alert" style={{ margin: 0, color: "var(--danger-400)" }}>
+                  {resolveError}
+                </p>
               )}
-              . As listas abaixo cobrem só importações e escritas na planilha — split,
-              tag, reembolso, fatura, teto e cenário ainda não ficam registrados aqui.
-              Os horários do lado do outro aparelho vêm do relógio dele, não deste.
-            </p>
+            </>
+          )}
+        </div>
 
-            <GestureList
-              title="Gestos deste aparelho"
-              hint="perdidos se você usar o outro aparelho"
-              gestures={details.local_gestures}
-              emptyText="Não há registro de importação ou escrita na planilha neste aparelho desde a última base em comum."
-            />
-            <GestureList
-              title="Gestos do outro aparelho"
-              hint="perdidos se você mantiver este aparelho"
-              gestures={details.remote_gestures}
-              emptyText="Não há registro de importação ou escrita na planilha no outro aparelho desde a última base em comum."
-            />
-
-            {resolveError && (
-              <p role="alert" style={{ margin: 0, color: "var(--danger-400)" }}>
-                {resolveError}
-              </p>
-            )}
-
+        {details && (
+          <div style={CARD_FOOTER_STYLE}>
             <div
               style={{
                 display: "flex",
@@ -403,7 +461,7 @@ export function SnapshotConflictScreen() {
                 {resolving === "keep_local" ? "Publicando…" : "Manter este aparelho"}
               </Button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </dialog>
