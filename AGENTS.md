@@ -38,6 +38,7 @@ The public repo must stay source-neutral and data-free. Do not commit private so
 
 - Never push to `main` directly: branch → PR → all checks green → squash-merge.
 - Commit subject: a descriptive sentence in pt-BR stating what changed and why (no Conventional Commits prefixes); body carries the rationale when the subject is not enough.
+- Squash-merge uses the PR title as the commit subject and the PR body as the commit message (repository setting). This is what feeds release-please its Conventional Commits prefix and makes `Closes #N` deliberate — individual commit messages never leak into `main`'s history.
 - Branch names are short and purpose-prefixed (e.g. `impl/issue-123`, `ci/<topic>`).
 - PRs are didactic: what and why in the first paragraph, how to verify, and `Closes #N` on its own line to auto-close the issue.
 - No agent/model self-references in commits, PRs, code comments, or docs.
