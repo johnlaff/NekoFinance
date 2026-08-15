@@ -62,10 +62,10 @@ pub async fn run_oauth_flow(
     }
 
     // A credencial Android (`RedirectStrategy::DeepLink`) não tem client secret no Console — só
-    // PKCE autentica a troca. Zeramos aqui, na única borda por onde todo `code` passa antes da
-    // troca, em vez de confiar que quem montou `config` já não incluiu um secret de outra
-    // credencial (a Desktop, cujo secret pode vazar por env de build compartilhado — ver
-    // `pkce::resolve_client_secret`).
+    // PKCE autentica a troca. `pkce::resolve_client_secret` já zera o secret para o target
+    // Android (`cfg!(target_os = "android")`, cobrindo também a renovação em segundo plano); esta
+    // é a segunda camada, na única borda por onde todo `code` passa antes da troca — não depende
+    // de quem montou `config` ter passado pelo resolvedor certo.
     let config = pkce::OAuthConfig {
         client_secret: secret_for_exchange(config.client_secret, &state.redirect),
         ..config

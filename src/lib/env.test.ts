@@ -63,3 +63,49 @@ describe("isAndroid — resolução no import do módulo", () => {
     expect(mod.isAndroid).toBe(false);
   });
 });
+
+describe("GOOGLE_OAUTH_CLIENT_ID — escolha de client id por plataforma", () => {
+  afterEach(() => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {},
+      configurable: true,
+    });
+    Object.defineProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__", {
+      value: { platform: "linux" },
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+
+  // O Android tem que enviar o MESMO client id que emitiu o `code`/`refresh_token` — reverter
+  // esta escolha para o id Desktop do env não quebra a build (os dois são strings), só o
+  // consentimento real no aparelho. Sem este teste, essa reversão passa silenciosa.
+  it("usa a constante da credencial Android quando isAndroid é true, nunca o client id do env", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {},
+      configurable: true,
+    });
+    Object.defineProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__", {
+      value: { platform: "android" },
+      configurable: true,
+    });
+    vi.resetModules();
+
+    const mod = await import("./env");
+
+    expect(mod.isAndroid).toBe(true);
+    expect(mod.GOOGLE_OAUTH_CLIENT_ID).toBe(mod.GOOGLE_ANDROID_CLIENT_ID);
+    expect(mod.GOOGLE_OAUTH_CLIENT_ID).not.toBe(mod.GOOGLE_CLIENT_ID);
+  });
+
+  it("usa o client id do env fora do Android", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    Reflect.deleteProperty(window, "__TAURI_OS_PLUGIN_INTERNALS__");
+    vi.resetModules();
+
+    const mod = await import("./env");
+
+    expect(mod.isAndroid).toBe(false);
+    expect(mod.GOOGLE_OAUTH_CLIENT_ID).toBe(mod.GOOGLE_CLIENT_ID);
+  });
+});

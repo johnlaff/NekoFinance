@@ -132,10 +132,11 @@ keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -sto
 
 The client id Google issues for an Android credential is **public** (unlike the Desktop
 credential's secret) and lives versioned in source, never in `.env` — a variable baked at build
-time already produced broken builds when it landed empty or mistyped. It appears in two places
-that have to stay byte-for-byte in sync (there is no single source of truth to derive one from the
-other — the JSON config and the Rust constant are compared by CI, but a value edited in only one
-would drift silently otherwise):
+time already produced broken builds when it landed empty or mistyped. It appears in 4 places that
+have to stay byte-for-byte in sync (there is no single source of truth to derive the other three
+from — `scripts/check-android-oauth-client-id.mjs`, wired into `npm run check` via `npm run
+lint:android-oauth-client-id`, derives the reversed scheme from `GOOGLE_ANDROID_CLIENT_ID` and
+fails the moment one of the other three drifts):
 
 - `src/lib/env.ts` → `GOOGLE_ANDROID_CLIENT_ID`
 - `src-tauri/src/oauth/redirect.rs` → `ANDROID_OAUTH_SCHEME` (the same id, reversed — the
