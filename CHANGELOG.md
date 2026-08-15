@@ -4,6 +4,13 @@ All notable changes to Neko Finance are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), entries are written
 for humans, and versions follow [SemVer](https://semver.org/).
 
+## [0.3.1](https://github.com/johnlaff/NekoFinance/compare/v0.3.0...v0.3.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* repõe no changelog o conserto do OAuth dos builds de release ([#465](https://github.com/johnlaff/NekoFinance/issues/465)) ([361dbc1](https://github.com/johnlaff/NekoFinance/commit/361dbc1f666301fd08358eb9df760ae54e44d009))
+
 ## [0.3.0](https://github.com/johnlaff/NekoFinance/compare/v0.2.1...v0.3.0) (2026-08-14)
 
 
