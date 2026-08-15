@@ -273,6 +273,18 @@ describe("driveCheckoutOutcomeWarning — aviso do desfecho do check-out (spec 0
     expect(warning).toContain("feche e abra o app");
     expect(warning).not.toContain("baixar agora");
   });
+
+  it("client id ausente com token válido: orienta reconectar uma vez (issue #475)", () => {
+    // A classe residual do check-out silencioso: o dono já conectou de verdade (o token está no
+    // cofre), mas o client id nunca foi persistido — distinto da recusa por schema (não é "vá
+    // atualizar o app") e da falha de rede (não é "o app tenta de novo sozinho": reconectar
+    // resolve, tentar de novo sozinho nunca resolveria porque nada mudou sem o gesto do dono).
+    const warning = driveCheckoutOutcomeWarning({
+      ...BASE_DRIVE_CHECKIN_INFO,
+      last_checkout_outcome: "missing_client_id",
+    });
+    expect(warning).toContain("Reconecte");
+  });
 });
 
 describe("driveUnpublishedChangesNote — estado honesto de mudanças não publicadas (spec 043 #427)", () => {

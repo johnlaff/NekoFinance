@@ -35,6 +35,14 @@ pub enum CheckoutOutcome {
     /// sem passar pelo strip do export), então o check-out segue o veredito normal do árbitro em
     /// vez de adotar às cegas.
     CaughtUpOwnSequence { sequence: i64 },
+    /// Nenhum `app_setting.sheets_client_id` persistido, mas HÁ um token válido no cofre — a
+    /// classe residual da issue #475: distinta de "nunca conectou" (silenciosa, coberta pelo item
+    /// 5 da issue #446), porque aqui HOUVE uma conexão bem-sucedida no passado — só falta o
+    /// client id que a conexão de agora em diante grava (`oauth::run_oauth_flow`). Uma
+    /// reconexão única resolve: o próximo `start_oauth_flow` bem-sucedido persiste o valor que
+    /// falta. Nunca uma falha do check-out em si — é por isso que fica FORA de `Err`, ao lado dos
+    /// outros desfechos visíveis-mas-não-erro como `RefusedNewerSchema`.
+    MissingClientId,
 }
 
 /// Pool sempre utilizável + o que aconteceu. `outcome: Err(_)` é um problema NÃO-FATAL (rede,
@@ -144,16 +152,31 @@ pub(crate) async fn reopen_after_swap_or_rollback(
     }
 }
 
+/// Desfecho de [`resolve_drive_client_best_effort`]: ou um cliente pronto (`Ready`), ou um dos DOIS
+/// motivos de não tentar que a resolução distingue — ver o doc de cada variante para a diferença
+/// entre eles (a mesma distinção que a issue #475 introduziu).
+pub(crate) enum ClientResolution {
+    Ready(DriveSnapshotClient),
+    /// Nunca conectou de verdade: sem `sheets_client_id`, sem token, ou escopo `drive.appdata`
+    /// ainda não concedido (`NEEDS_DRIVE_REAUTH`, uma conexão de antes deste escopo existir).
+    /// Silencioso — item 5 da issue #446, nada a avisar na tela de Conexão.
+    NotConfigured,
+    /// Sem `sheets_client_id` persistido, mas HÁ um token válido no cofre — a classe residual da
+    /// issue #475 (ver o doc de [`CheckoutOutcome::MissingClientId`]). Visível, nunca silencioso.
+    MissingClientId,
+}
+
 /// Resolve client id → token com escopo `drive.appdata` → cliente pronto, em modo melhor esforço
-/// (ADR-0015): SÓ os motivos de NÃO TENTAR — sem client id configurado, ou nenhum token guardado
-/// (nunca conectou) — devolvem `Ok(None)` em silêncio, "sync ainda não configurado". A partir daí
-/// a decisão de tentar já foi tomada; um erro genuíno DEPOIS disso (rede durante o refresh do
-/// token, HTTP do provedor recusando o refresh) é uma tentativa que FALHOU e precisa ficar
-/// visível como `Err`, nunca desaparecer como se nada tivesse acontecido — a mesma distinção que
-/// o doc de `checkout_on_open_best_effort` já promete ("só a decisão de TENTAR é best-effort, não
-/// o resultado da tentativa"). O escopo `drive.appdata` ainda não concedido (`NEEDS_DRIVE_REAUTH`,
-/// uma conexão de antes deste recurso existir) fica na MESMA classe de "não configurado" das duas
-/// primeiras — é "ainda não migrou para o re-consentimento", não uma falha de tentativa.
+/// (ADR-0015): SÓ os motivos de NÃO TENTAR — sem client id configurado E sem token (nunca
+/// conectou), ou escopo `drive.appdata` ainda não concedido — devolvem `NotConfigured` em
+/// silêncio, "sync ainda não configurado". Um client id ausente MAS COM um token válido no cofre é
+/// uma terceira classe (`MissingClientId`, issue #475): a conexão já aconteceu, só a gravação do
+/// client id ficou faltando — visível, não silenciosa. A partir daí a decisão de tentar já foi
+/// tomada; um erro genuíno DEPOIS disso (rede durante o refresh do token, HTTP do provedor
+/// recusando o refresh) é uma tentativa que FALHOU e precisa ficar visível como `Err`, nunca
+/// desaparecer como se nada tivesse acontecido — a mesma distinção que o doc de
+/// `checkout_on_open_best_effort` já promete ("só a decisão de TENTAR é best-effort, não o
+/// resultado da tentativa").
 ///
 /// Compartilhado pelos três pontos de entrada que tentam o Drive sem um clique explícito do dono:
 /// o check-out no boot, a sonda de foco, e o check-in automático
@@ -161,7 +184,7 @@ pub(crate) async fn reopen_after_swap_or_rollback(
 pub(crate) async fn resolve_drive_client_best_effort(
     pool: &SqlitePool,
     app_dir: &Path,
-) -> Result<Option<DriveSnapshotClient>, String> {
+) -> Result<ClientResolution, String> {
     resolve_drive_client_best_effort_at(
         pool,
         app_dir,
@@ -179,17 +202,26 @@ async fn resolve_drive_client_best_effort_at(
     app_dir: &Path,
     token_url: &str,
     drive_base_url: &str,
-) -> Result<Option<DriveSnapshotClient>, String> {
-    let Some(client_id) = crate::sync_task::resolve_client_id(pool).await else {
-        return Ok(None);
-    };
-    // Checado ANTES de `ensure_drive_scope_at`, sync (é uma leitura local — keychain/arquivo, nunca
-    // rede): só assim dá para distinguir "nunca conectou" (silencioso) de uma falha real DEPOIS de
-    // decidir tentar (o refresh abaixo, que pode tocar rede).
-    match crate::oauth::token_store::load_token(app_dir) {
-        Ok(None) => return Ok(None),
-        Ok(Some(_)) => {}
+) -> Result<ClientResolution, String> {
+    let client_id = crate::sync_task::resolve_client_id(pool).await;
+    // Leitura local (keychain/arquivo, nunca rede) ANTES de decidir: só assim dá para distinguir,
+    // sem `sheets_client_id` configurado, "nunca conectou de verdade" (silencioso) de "conectou,
+    // mas a gravação do client id não aconteceu" (issue #475, visível) — e, com client id
+    // presente, distinguir "nunca conectou" (silencioso) de uma falha real DEPOIS de decidir
+    // tentar (o refresh abaixo, que pode tocar rede).
+    let token = match crate::oauth::token_store::load_token(app_dir) {
+        Ok(t) => t,
         Err(e) => return Err(e),
+    };
+    let Some(client_id) = client_id else {
+        return Ok(if token.is_some() {
+            ClientResolution::MissingClientId
+        } else {
+            ClientResolution::NotConfigured
+        });
+    };
+    if token.is_none() {
+        return Ok(ClientResolution::NotConfigured);
     }
     let client_secret = crate::oauth::pkce::resolve_client_secret(None);
     let token = match crate::oauth::token_store::ensure_drive_scope_at(
@@ -201,10 +233,15 @@ async fn resolve_drive_client_best_effort_at(
     .await
     {
         Ok(t) => t,
-        Err(e) if e == crate::oauth::token_store::NEEDS_DRIVE_REAUTH => return Ok(None),
+        Err(e) if e == crate::oauth::token_store::NEEDS_DRIVE_REAUTH => {
+            return Ok(ClientResolution::NotConfigured);
+        }
         Err(e) => return Err(e),
     };
-    Ok(Some(DriveSnapshotClient::new(token, drive_base_url)))
+    Ok(ClientResolution::Ready(DriveSnapshotClient::new(
+        token,
+        drive_base_url,
+    )))
 }
 
 /// Tudo capturado ANTES do ponto de não-retorno (fechar o pool antigo) e pronto para o commit da
@@ -646,13 +683,19 @@ async fn checkout_on_open_best_effort_at(
 
     let result = match resolved {
         Err(_elapsed) => deadline_exceeded_result(pool, deadline),
-        Ok(Ok(Some(drive))) => {
+        Ok(Ok(ClientResolution::Ready(drive))) => {
             let remaining = deadline.saturating_sub(resolve_started_at.elapsed());
             checkout_on_open_with_deadline(pool, db_path, &drive, remaining).await?
         }
-        Ok(Ok(None)) => CheckoutResult {
+        Ok(Ok(ClientResolution::NotConfigured)) => CheckoutResult {
             pool,
             outcome: Ok(CheckoutOutcome::NothingToDo),
+        },
+        // Issue #475: distinto de `NotConfigured` — visível na tela de Conexão via
+        // `outcome_warning_fields`, nunca silencioso.
+        Ok(Ok(ClientResolution::MissingClientId)) => CheckoutResult {
+            pool,
+            outcome: Ok(CheckoutOutcome::MissingClientId),
         },
         Ok(Err(e)) => CheckoutResult {
             pool,
@@ -773,11 +816,19 @@ pub(crate) async fn probe_newer_snapshot_on_focus(
 const FOCUS_PROBE_DEBOUNCE_SECS: u64 = 60;
 const LAST_FOCUS_PROBE_AT_KEY: &str = "snapshot_last_focus_probe_at";
 
+/// Rótulo fechado gravado em `snapshot_state.last_checkout_outcome` quando
+/// [`ClientResolution::MissingClientId`] surge — compartilhado entre o check-out do boot (via
+/// [`outcome_warning_fields`]) e a sonda de foco, para os dois nunca divergirem no texto que a
+/// tela de Conexão casa (issue #475).
+const MISSING_CLIENT_ID_OUTCOME: &str = "missing_client_id";
+
 /// O gancho de verdade que `lib.rs` chama quando a janela ganha foco: debounce próprio (mesma
 /// cadência do probe de foco da planilha) e resolve o cliente do Drive via
-/// [`resolve_drive_client_best_effort`] — qualquer motivo de não tentar (nunca conectou, sem
-/// escopo) é silencioso. Uma falha DEPOIS de decidir tentar (rede, integridade) é logada pelo
-/// chamador, nunca engolida aqui.
+/// [`resolve_drive_client_best_effort`] — "nunca conectou de verdade" é silencioso;
+/// `MissingClientId` (issue #475) avisa a tela de Conexão pelo mesmo campo que o check-out do boot
+/// usa, para o dono ver o aviso mesmo num boot que não chegou a rodar o check-out (app já aberto,
+/// só ganhou foco). Uma falha DEPOIS de decidir tentar (rede, integridade) é logada pelo chamador,
+/// nunca engolida aqui.
 pub async fn probe_newer_snapshot_on_focus_best_effort(
     pool: &SqlitePool,
     app_dir: &Path,
@@ -791,20 +842,27 @@ pub async fn probe_newer_snapshot_on_focus_best_effort(
     }
     crate::commands::app_setting_set(pool, LAST_FOCUS_PROBE_AT_KEY, &now.to_string()).await?;
 
-    let Some(drive) = resolve_drive_client_best_effort(pool, app_dir).await? else {
-        return Ok(());
+    let drive = match resolve_drive_client_best_effort(pool, app_dir).await? {
+        ClientResolution::Ready(drive) => drive,
+        ClientResolution::NotConfigured => return Ok(()),
+        ClientResolution::MissingClientId => {
+            return state::record_checkout_outcome(pool, Some(MISSING_CLIENT_ID_OUTCOME), None)
+                .await;
+        }
     };
     probe_newer_snapshot_on_focus(pool, &drive).await
 }
 
 /// Mapeia o desfecho do check-out para o rótulo fechado que `snapshot_state.last_checkout_outcome`
-/// grava — só os dois casos que a UI de Conexão precisa avisar (`CHECKIN`/`RefusedNewerSchema` tem
-/// copy própria já visível; `NothingToDo`/`Restored`/`CaughtUpOwnSequence` não precisam de aviso,
-/// então limpam qualquer um pendente de uma tentativa anterior). Função pura, testável sem rede.
+/// grava — os casos que a UI de Conexão precisa avisar (`CHECKIN`/`RefusedNewerSchema`/
+/// `MissingClientId` têm copy própria já visível; `NothingToDo`/`Restored`/`CaughtUpOwnSequence`
+/// não precisam de aviso, então limpam qualquer um pendente de uma tentativa anterior). Função
+/// pura, testável sem rede.
 fn outcome_warning_fields(
     outcome: &Result<CheckoutOutcome, String>,
 ) -> (Option<String>, Option<String>) {
     match outcome {
+        Ok(CheckoutOutcome::MissingClientId) => (Some(MISSING_CLIENT_ID_OUTCOME.to_string()), None),
         Ok(CheckoutOutcome::RefusedNewerSchema {
             local_schema,
             remote_schema,
@@ -2494,7 +2552,7 @@ mod tests {
         std::fs::create_dir_all(&app_dir).unwrap();
 
         let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
-        assert!(matches!(result, Ok(None)));
+        assert!(matches!(result, Ok(ClientResolution::NotConfigured)));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2512,7 +2570,7 @@ mod tests {
         // silencioso, a mesma classe de "não configurado" da falta de client id.
 
         let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
-        assert!(matches!(result, Ok(None)));
+        assert!(matches!(result, Ok(ClientResolution::NotConfigured)));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2582,7 +2640,100 @@ mod tests {
         // Escopo `drive.appdata` ainda não concedido é "ainda não migrou para o re-consentimento"
         // — a mesma classe de "não configurado" da falta de client id/token, nunca uma falha de
         // tentativa (a spec espera o re-consentimento único, não um erro a cada boot).
-        assert!(matches!(result, Ok(None)));
+        assert!(matches!(result, Ok(ClientResolution::NotConfigured)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Issue #475: client id ausente mas token válido é visível, não silencioso ---------------
+
+    #[tokio::test]
+    async fn resolve_drive_client_best_effort_is_visibly_missing_client_id_with_a_valid_token_and_no_client_id()
+     {
+        // Aparelho com conexão real — o token está no cofre e é válido — mas sem
+        // `sheets_client_id` persistido (conexão feita por uma versão que não o gravava, ou uma
+        // escrita best-effort que falhou). Diferente de "nunca conectou": aqui NÃO É silencioso,
+        // porque uma reconexão resolve e o dono precisa saber que precisa reconectar.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        // Nenhum `sheets_client_id` em app_setting — a lacuna que a issue #475 diagnosticou.
+        {
+            // Mesmo padrão de `..._when_the_token_lacks_the_drive_scope`: serializado com
+            // `token_store`/`mia::key_store` (mesmo lock global), escopo síncrono restrito a
+            // ANTES do `.await` (clippy reprova `std::sync::Mutex` atravessando suspensão).
+            let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            let stored = crate::oauth::token_store::StoredToken {
+                access_token: "ya29.valido".into(),
+                refresh_token: "1//valido".into(),
+                expires_at: 9_999_999_999, // não expira — nenhuma chamada de rede é feita
+                scope: format!(
+                    "{} {}",
+                    crate::oauth::pkce::SHEETS_WRITE_SCOPE,
+                    crate::oauth::pkce::DRIVE_APPDATA_SCOPE
+                ),
+            };
+            crate::oauth::token_store::store_token(&app_dir, &stored).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        let result = resolve_drive_client_best_effort(&pool, &app_dir).await;
+        assert!(
+            matches!(result, Ok(ClientResolution::MissingClientId)),
+            "client id ausente com um token válido presente precisa ficar visível \
+             (MissingClientId), nunca cair no mesmo silêncio de 'nunca conectou'"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn boot_checkout_surfaces_missing_client_id_instead_of_silently_doing_nothing() {
+        // A costura completa (não só o resolver isolado): o check-out do boot precisa gravar o
+        // desfecho visível em `snapshot_state.last_checkout_outcome` — o campo que a tela de
+        // Conexão lê — em vez do `NothingToDo` silencioso que a issue #475 reportou.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        {
+            let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            let stored = crate::oauth::token_store::StoredToken {
+                access_token: "ya29.valido".into(),
+                refresh_token: "1//valido".into(),
+                expires_at: 9_999_999_999,
+                scope: format!(
+                    "{} {}",
+                    crate::oauth::pkce::SHEETS_WRITE_SCOPE,
+                    crate::oauth::pkce::DRIVE_APPDATA_SCOPE
+                ),
+            };
+            crate::oauth::token_store::store_token(&app_dir, &stored).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        let result = checkout_on_open_best_effort(pool, &db_path, &app_dir)
+            .await
+            .expect("best-effort nunca falha quando a resolução do cliente decide não tentar");
+        assert_eq!(result.outcome, Ok(CheckoutOutcome::MissingClientId));
+
+        let after = state::load_or_init(&result.pool).await.unwrap();
+        assert_eq!(
+            after.last_checkout_outcome.as_deref(),
+            Some("missing_client_id"),
+            "a tela de Conexão precisa deste rótulo para orientar reconectar uma vez"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -182,16 +182,21 @@ export function driveCheckoutLabel(
 
 /** Rótulo fechado que `snapshot_state.last_checkout_outcome` grava — os dois de uma tentativa
  *  real de restauração (`checkout::outcome_warning_fields`) e o da sonda leve de foco
- *  (`checkout::probe_newer_snapshot_on_focus`, ADR-0015). */
-type CheckoutOutcomeTag = "refused_newer_schema" | "error" | "newer_available";
+ *  (`checkout::probe_newer_snapshot_on_focus`, ADR-0015). `missing_client_id` é a classe residual
+ *  da issue #475: a conexão aconteceu de verdade (o token está no cofre), mas o client id que a
+ *  renovação em segundo plano precisa nunca foi persistido — uma reconexão única resolve. */
+type CheckoutOutcomeTag =
+  "refused_newer_schema" | "error" | "newer_available" | "missing_client_id";
 
 /**
  * Aviso calmo do desfecho do último check-out que merece a atenção do dono: a
  * recusa por schema remoto mais novo orienta a atualizar o app; a falha de rede/integridade diz
- * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura; e uma versão
- * mais nova detectada em foco (sem baixar/trocar arquivo mid-session) pede reabrir o app — nunca
- * um botão de "tentar agora"/"baixar agora" que esta tela não tem. `null` quando não há nada a
- * avisar (check-out em dia, restaurado com sucesso, ou nunca rodou).
+ * que a leitura não aconteceu e que o app tenta de novo sozinho na próxima abertura; uma versão
+ * mais nova detectada em foco (sem baixar/trocar arquivo mid-session) pede reabrir o app; e um
+ * client id ausente com um token válido no cofre orienta reconectar UMA vez — distinto da falha de
+ * rede porque tentar de novo sozinho nunca resolveria isto sem o gesto do dono. Nunca um botão de
+ * "tentar agora"/"baixar agora" que esta tela não tem. `null` quando não há nada a avisar
+ * (check-out em dia, restaurado com sucesso, ou nunca rodou).
  */
 export function driveCheckoutOutcomeWarning(
   info: DriveCheckinInfo | null | undefined,
@@ -213,6 +218,8 @@ export function driveCheckoutOutcomeWarning(
         "Uma versão mais nova está disponível no Drive — feche e abra o app de novo para " +
         "recebê-la."
       );
+    case "missing_client_id":
+      return "Reconecte o Google uma vez para retomar a sincronização automática.";
     default:
       return null;
   }

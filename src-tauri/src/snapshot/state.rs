@@ -307,6 +307,12 @@ pub async fn record_checkout_outcome(
     outcome: Option<&str>,
     detail: Option<&str>,
 ) -> Result<(), String> {
+    // A linha singleton é criada por `load_or_init` na primeira leitura — mas um boot que decide
+    // NÃO tentar restaurar (issue #475: client id ausente, sem client id/token nenhum) nunca passa
+    // por `prepare_restore`, que é quem normalmente a cria primeiro. Sem garantir a linha aqui, o
+    // `UPDATE` abaixo afeta zero linhas em silêncio num aparelho recém-instalado — exatamente o
+    // caso que este aviso existe para cobrir.
+    load_or_init(pool).await?;
     sqlx::query(
         "UPDATE snapshot_state SET last_checkout_outcome = ?1, last_checkout_outcome_detail = ?2 \
          WHERE id = 1",
