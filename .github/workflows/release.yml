@@ -78,6 +78,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Bakes the Google OAuth client into the Vite bundle (see src/lib/env.ts,
+          # src/lib/api.ts) the same way a local `.env` does for `npm run tauri build`.
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_DESKTOP_CLIENT_KEY: ${{ secrets.VITE_GOOGLE_DESKTOP_CLIENT_KEY }}
+          # Same desktop client secret, embedded in the Rust binary via `option_env!`
+          # (src-tauri/src/oauth/pkce.rs::resolve_client_secret). The frontend only forwards
+          # the secret on the user-initiated connect flow; background token refresh runs
+          # without it, so the shipped .exe needs this compile-time fallback or the Google
+          # connection drops every ~1h in release builds.
+          GOOGLE_CLIENT_SECRET: ${{ secrets.VITE_GOOGLE_DESKTOP_CLIENT_KEY }}
         with:
           tagName: ${{ inputs.tag }}
           releaseName: "Neko Finance v__VERSION__"
