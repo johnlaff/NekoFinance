@@ -52,6 +52,14 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["full"] }
 oauth2 = { version = "5", features = ["reqwest"] }
 reqwest = { version = "0.13", features = ["json", "form", "query"] }
+# Raízes de CA da Mozilla embutidas no binário — só o núcleo de rede Android as usa
+# (`http::android_client_builder`), no lugar do verificador de plataforma padrão do `reqwest`
+# (`rustls-platform-verifier`), que no Android exige uma ponte JNI+Gradle que o app não tem. O
+# crate em si não depende de plataforma nenhuma, então fica em `[dependencies]` normal para o
+# parsing (`embedded_root_certs`) ser testável em qualquer host. As trocas dessa rota (raízes
+# presas na versão do build, sem CRL/OCSP, sem CA corporativa/de usuário no Android) e quando
+# revalidá-las estão documentadas no doc comment de `android_client_builder` (verificado 2026-08).
+webpki-root-certs = "1"
 open = "5"
 rand = "0.10"
 chrono = "0.4"

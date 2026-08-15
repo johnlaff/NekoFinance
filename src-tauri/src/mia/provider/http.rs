@@ -52,19 +52,19 @@ impl HttpAdapter {
     /// default: o default segue redirecionamento, e seguir redirecionamento entrega ao outro
     /// lado a escolha de quem recebe a rodada.
     pub(crate) fn new(api_key: String) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            // Proxy de ambiente é outro destino no fio: `HTTPS_PROXY` reencaminharia corpo e
-            // credencial por um host que a allowlist nunca examinou. A conversa fala direto ou
-            // não fala — ao contrário do cliente compartilhado do app, que honra proxy de
-            // propósito para as rotas do Google.
-            .no_proxy()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .read_timeout(READ_TIMEOUT)
-            .build()
-            .map_err(|error| {
-                format!("O cliente HTTP da conversa não pôde ser montado: {error}.")
-            })?;
+        let client = crate::http::android_client_builder(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                // Proxy de ambiente é outro destino no fio: `HTTPS_PROXY` reencaminharia corpo e
+                // credencial por um host que a allowlist nunca examinou. A conversa fala direto ou
+                // não fala — ao contrário do cliente compartilhado do app, que honra proxy de
+                // propósito para as rotas do Google.
+                .no_proxy()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(READ_TIMEOUT),
+        )
+        .build()
+        .map_err(|error| format!("O cliente HTTP da conversa não pôde ser montado: {error}."))?;
         Ok(Self { client, api_key })
     }
 }
