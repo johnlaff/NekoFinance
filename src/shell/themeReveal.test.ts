@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as EnvModule from "../lib/env";
 
 /**
- * `playThemeReveal` escolhe entre dois caminhos: a View Transitions API (pseudo-elemento
- * animado) ou o overlay manual (clip-path com furo, o único confirmado visualmente nas
- * WebViews embutidas do Tauri). A escolha depende de `isTauri`, uma constante fixada na
- * carga do módulo `../lib/env` — por isso cada cenário reinicia os módulos e mocka
- * `../lib/env` ANTES de importar `./themeReveal`, em vez de tentar mutar `window` depois
- * que o módulo já carregou.
+ * `playThemeReveal` escolhe entre três caminhos: a View Transitions API (pseudo-elemento
+ * animado, só fora do Tauri), o overlay manual com furo de clip-path (Tauri desktop — a
+ * primitiva confirmada no WebView2) e o crossfade de opacidade (Tauri Android — o clip-path
+ * animado não compõe de forma confiável nesse WebView). A escolha depende de `isTauri` e
+ * `isAndroid`, constantes fixadas na carga do módulo `../lib/env` — por isso cada cenário
+ * reinicia os módulos e mocka `../lib/env` ANTES de importar `./themeReveal`, em vez de
+ * tentar mutar `window` depois que o módulo já carregou.
  */
 
 interface LooseDoc {
@@ -26,6 +27,12 @@ function stubWaapiOnElements(): void {
   }));
 }
 
+function stubWaapiOnElementsSpy(): ReturnType<typeof vi.fn> {
+  const spy = vi.fn(() => ({ addEventListener: vi.fn() }));
+  (HTMLElement.prototype as unknown as { animate: unknown }).animate = spy;
+  return spy;
+}
+
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
@@ -36,9 +43,8 @@ afterEach(() => {
   delete (document as unknown as LooseDoc).startViewTransition;
   delete (document.documentElement as unknown as { animate?: unknown }).animate;
   delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
-  document
-    .querySelectorAll("[aria-hidden='true'][style*='clip-path']")
-    .forEach((el) => el.remove());
+  // Cobre o overlay com furo (clip-path) e o crossfade Android (sem clip-path, só opacity).
+  document.querySelectorAll("[aria-hidden='true']").forEach((el) => el.remove());
   vi.restoreAllMocks();
   vi.doUnmock("../lib/env");
 });
@@ -67,6 +73,52 @@ describe("playThemeReveal — dentro do shell do Tauri (isTauri=true)", () => {
       document.querySelector("[aria-hidden='true'][style*='clip-path']"),
     ).not.toBeNull();
     expect(rootAnimateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("playThemeReveal — dentro do Tauri no WebView Android (isTauri=true, isAndroid=true)", () => {
+  it("degrada para o crossfade de opacidade — nunca o clip-path que não compõe nesse WebView", async () => {
+    vi.doMock("../lib/env", async (importOriginal) => {
+      const actual = await importOriginal<typeof EnvModule>();
+      return { ...actual, isTauri: true, isAndroid: true };
+    });
+    const elementAnimateSpy = stubWaapiOnElementsSpy();
+
+    const { playThemeReveal } = await import("./themeReveal");
+    const apply = vi.fn();
+    playThemeReveal(10, 20, 100, "light", apply);
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const overlay = document.querySelector("[aria-hidden='true']");
+    expect(overlay).not.toBeNull();
+    expect((overlay as HTMLElement).style.clipPath).toBe("");
+
+    expect(elementAnimateSpy).toHaveBeenCalledTimes(1);
+    const keyframes = elementAnimateSpy.mock.calls[0]![0] as Record<string, unknown>[];
+    // Dissolve puro — nenhum keyframe carrega clip-path (a primitiva que falhou no aparelho).
+    expect(keyframes.every((kf) => "opacity" in kf)).toBe(true);
+    expect(keyframes.some((kf) => "clipPath" in kf)).toBe(false);
+  });
+
+  it("ignora a View Transitions API mesmo presente — cai direto no crossfade, não no overlay de furo", async () => {
+    vi.doMock("../lib/env", async (importOriginal) => {
+      const actual = await importOriginal<typeof EnvModule>();
+      return { ...actual, isTauri: true, isAndroid: true };
+    });
+    (document as unknown as LooseDoc).startViewTransition = (cb: () => void) => {
+      cb();
+      return { ready: Promise.resolve() };
+    };
+    const rootAnimateSpy = stubWaapiOnRoot();
+    const elementAnimateSpy = stubWaapiOnElementsSpy();
+
+    const { playThemeReveal } = await import("./themeReveal");
+    const apply = vi.fn();
+    playThemeReveal(10, 20, 100, "dark", apply);
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(rootAnimateSpy).not.toHaveBeenCalled();
+    expect(elementAnimateSpy).toHaveBeenCalledTimes(1);
   });
 });
 

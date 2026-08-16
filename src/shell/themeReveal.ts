@@ -4,9 +4,9 @@
  *
  * Técnica: quando a View Transitions API existe NUM BROWSER COMUM, ela tira snapshot do
  * tema antigo e do novo e o novo é revelado por um círculo de clip-path do clique — os
- * elementos da UI nunca somem. Caminho padrão (jsdom/engines sem a API, e SEMPRE dentro do
- * shell do Tauri): cobre com um overlay da cor antiga e abre um FURO circular via
- * `clip-path: path()`. A duração é SEMPRE uma constante — o token resolve para "~0" via
+ * elementos da UI nunca somem. Caminho padrão no Tauri desktop (e jsdom/engines sem a
+ * API): cobre com um overlay da cor antiga e abre um FURO circular via `clip-path:
+ * path()`. A duração é SEMPRE uma constante — o token resolve para "~0" via
  * getComputedStyle no WebView2. Evitados: `opacity` (o compositor não a pinta aqui) e
  * `transform: scale()` de 0 num elemento gigante (raster inicial vazio).
  *
@@ -18,11 +18,20 @@
  * a API sem herdar essa garantia de composição, então a detecção de API sozinha não é
  * sinal confiável nesse modelo — daí `isTauri` gatear o caminho, não só `typeof`.
  *
+ * O WebView Android tem uma segunda armadilha própria: o `clip-path` animado do overlay
+ * manual (a primitiva confirmada no WebView2 desktop) não compõe de forma confiável nele —
+ * medido com `screenrecord` no aparelho de referência, o furo circular não aparece; em vez
+ * disso o overlay pisca como um retângulo sólido crescendo do topo até cobrir a tela
+ * inteira, e o tema novo aparece de corte seco por baixo. Pior que a troca sem animação que
+ * existia antes. Por isso o Android dentro do Tauri usa um TERCEIRO caminho — um crossfade
+ * de opacidade no próprio overlay —, a única primitiva comprovadamente composta nesse
+ * WebView: sem furo que cresce do clique (menos floreio), mas sem o flash quebrado.
+ *
  * Cada etapa grava um evento em `nk-motion-log:v1` (localStorage, últimos 8) — o
  * diagnóstico exibe o log para depurar o caminho real sem devtools.
  */
 
-import { isTauri } from "../lib/env";
+import { isAndroid, isTauri } from "../lib/env";
 
 export type Theme = "dark" | "light";
 
@@ -104,10 +113,10 @@ function coverWithHolePath(
 }
 
 /**
- * Reveal "buraco crescente", só com `clip-path` — a única primitiva confirmada
- * visualmente nas WebViews embutidas do Tauri (`opacity` não pinta no WebView2; os
- * pseudo-elementos de View Transitions dependem de um modelo de composição que essas
- * WebViews não garantem; daí este caminho manual ser o padrão sob `isTauri`):
+ * Reveal "buraco crescente", só com `clip-path` — a primitiva confirmada visualmente no
+ * WebView2 desktop (`opacity` não pinta lá; os pseudo-elementos de View Transitions
+ * dependem de um modelo de composição que essa WebView não garante). NÃO usado no Android
+ * dentro do Tauri — ver `playAndroidCrossfade`.
  *
  * 1. O tema é trocado JÁ (a UI nova pinta em ~0-9ms neste hardware) e imediatamente
  *    coberta por um overlay da cor do tema ANTIGO — a repintura acontece escondida.
@@ -119,54 +128,13 @@ function coverWithHolePath(
  * Sem corte seco, sem cor sólida parada, sem opacity, sem inversão de direção.
  * Um cancelamento aterrissa o overlay.
  */
-type DocWithVT = Document & {
-  startViewTransition?: (cb: () => void) => { ready: Promise<void> };
-};
-
-export function playThemeReveal(
+function playCoverWithHoleOverlay(
   x: number,
   y: number,
   radius: number,
   next: Theme,
   apply: () => void,
 ): void {
-  // Caminho preferido: View Transitions API, só FORA do Tauri (browser comum — dev server
-  // aberto numa aba, por exemplo). Ela tira um snapshot do tema ANTIGO (a UI real, com
-  // todos os elementos) e do NOVO; o antigo fica embaixo enquanto um círculo de clip-path
-  // revela o novo a partir do clique — os elementos NUNCA somem (o problema da cobertura
-  // chapada). Duração FIXA (o token resolve para "~0" via getComputedStyle no WebView2, ver
-  // REVEAL_DURATION_MS). Dentro do Tauri (desktop ou Android) a API existir não garante que
-  // o pseudo-elemento pinte — cai direto no caminho manual abaixo, o único confirmado.
-  const doc = document as DocWithVT;
-  if (!isTauri && typeof doc.startViewTransition === "function") {
-    logMotion(`reveal→${next}: via View Transitions (${REVEAL_DURATION_MS}ms)`);
-    try {
-      const transition = doc.startViewTransition(() => apply());
-      transition.ready
-        .then(() => {
-          document.documentElement.animate(
-            {
-              clipPath: [
-                `circle(0px at ${x}px ${y}px)`,
-                `circle(${Math.ceil(radius * 1.02)}px at ${x}px ${y}px)`,
-              ],
-            },
-            {
-              duration: REVEAL_DURATION_MS,
-              easing: REVEAL_EASING,
-              pseudoElement: "::view-transition-new(root)",
-            },
-          );
-        })
-        .catch(() => {
-          // Transição abortada — o tema já foi aplicado no callback.
-        });
-      return;
-    } catch {
-      // API presente mas quebrada em runtime → cai no fallback de cobertura.
-    }
-  }
-
   const overlay = document.createElement("div");
   if (typeof overlay.animate !== "function") {
     // Sem WAAPI (jsdom/engines antigos) → troca instantânea, sem floreio.
@@ -226,4 +194,112 @@ export function playThemeReveal(
   // então a remoção não coincide com nenhum frame visível.
   grow.addEventListener("finish", () => requestAnimationFrame(cleanup));
   grow.addEventListener("cancel", cleanup);
+}
+
+/**
+ * Crossfade honesto — o caminho do Android dentro do Tauri. O overlay manual com furo
+ * (`playCoverWithHoleOverlay`) não compõe de forma confiável nesse WebView (medido com
+ * `screenrecord`: o furo circular não aparece, o overlay pisca como retângulo sólido
+ * crescendo do topo, e o tema novo corta seco por baixo — pior que sem animação). Opacidade
+ * é a única primitiva comprovadamente composta nele, então o reveal aqui é um dissolve
+ * uniforme, sem o furo que cresce do ponto de clique:
+ *
+ * 1. Overlay opaco da cor do tema ANTIGO cobre a tela.
+ * 2. O tema troca por baixo, escondido.
+ * 3. O overlay dissolve (`opacity` 1→0) revelando a UI nova por igual — sem clip-path.
+ */
+function playAndroidCrossfade(next: Theme, apply: () => void): void {
+  const overlay = document.createElement("div");
+  if (typeof overlay.animate !== "function") {
+    logMotion("reveal: sem WAAPI, swap instantâneo (Android)");
+    apply();
+    return;
+  }
+  const oldBg = currentThemeBg(
+    document.documentElement.getAttribute("data-theme") === "light",
+  );
+  const t0 = performance.now();
+
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.style.cssText = `position:fixed;inset:0;z-index:9999;pointer-events:none;background:${oldBg};`;
+  document.body.appendChild(overlay);
+  void document.documentElement.offsetWidth;
+
+  apply();
+  void document.documentElement.offsetWidth;
+  logMotion(
+    `reveal→${next}: crossfade Android dur=${REVEAL_DURATION_MS}ms oldbg=${oldBg} · paint ${Math.round(performance.now() - t0)}ms`,
+  );
+
+  let done = false;
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    overlay.remove();
+  };
+  const fade = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: REVEAL_DURATION_MS,
+    easing: REVEAL_EASING,
+    fill: "forwards", // transparente até a remoção — sem overlay para destruir de repente
+  });
+  fade.addEventListener("finish", () => requestAnimationFrame(cleanup));
+  fade.addEventListener("cancel", cleanup);
+}
+
+type DocWithVT = Document & {
+  startViewTransition?: (cb: () => void) => { ready: Promise<void> };
+};
+
+export function playThemeReveal(
+  x: number,
+  y: number,
+  radius: number,
+  next: Theme,
+  apply: () => void,
+): void {
+  // Caminho preferido: View Transitions API, só FORA do Tauri (browser comum — dev server
+  // aberto numa aba, por exemplo). Ela tira um snapshot do tema ANTIGO (a UI real, com
+  // todos os elementos) e do NOVO; o antigo fica embaixo enquanto um círculo de clip-path
+  // revela o novo a partir do clique — os elementos NUNCA somem (o problema da cobertura
+  // chapada). Duração FIXA (o token resolve para "~0" via getComputedStyle no WebView2, ver
+  // REVEAL_DURATION_MS). Dentro do Tauri a API existir não garante que o pseudo-elemento
+  // pinte — cai nos caminhos manuais abaixo (Android tem o seu próprio, ver mais adiante).
+  const doc = document as DocWithVT;
+  if (!isTauri && typeof doc.startViewTransition === "function") {
+    logMotion(`reveal→${next}: via View Transitions (${REVEAL_DURATION_MS}ms)`);
+    try {
+      const transition = doc.startViewTransition(() => apply());
+      transition.ready
+        .then(() => {
+          document.documentElement.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${Math.ceil(radius * 1.02)}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: REVEAL_DURATION_MS,
+              easing: REVEAL_EASING,
+              pseudoElement: "::view-transition-new(root)",
+            },
+          );
+        })
+        .catch(() => {
+          // Transição abortada — o tema já foi aplicado no callback.
+        });
+      return;
+    } catch {
+      // API presente mas quebrada em runtime → cai no fallback de cobertura.
+    }
+  }
+
+  // Dentro do Tauri, Android tem caminho PRÓPRIO — o overlay com furo não compõe de forma
+  // confiável nesse WebView (ver o cabeçalho do módulo e `playAndroidCrossfade`).
+  if (isTauri && isAndroid) {
+    playAndroidCrossfade(next, apply);
+    return;
+  }
+
+  playCoverWithHoleOverlay(x, y, radius, next, apply);
 }

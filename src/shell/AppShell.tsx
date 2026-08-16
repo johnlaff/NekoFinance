@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   CalendarRange,
@@ -186,6 +186,9 @@ export function AppShell({
   const bodyRef = useRef<HTMLDivElement>(null);
   // Dock encolhe ao rolar para baixo e volta ao subir (padrão de tab bar de app).
   const [dockMin, setDockMin] = useState(false);
+  // Última posição de rolagem que a histerese abaixo já processou — `ref`, não `state`,
+  // porque o listener nativo lê e escreve fora do ciclo de render do React.
+  const lastScrollTopRef = useRef(0);
   // Coordenação large-title: com [data-large-title] na tela, o título da appbar
   // só assume quando o título grande sai de vista.
   const [titleAssumed, setTitleAssumed] = useState(true);
@@ -219,64 +222,45 @@ export function AppShell({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    let last = body.scrollTop;
-    let lastScrollHeight = body.scrollHeight;
-    let suppressUpUntil = 0;
-    let burstUntil = 0;
-    let burstFrame: number | null = null;
-    // Encolher a reserva do dock (`--dock-reserve`, redesign.css) quando ele soma reduz o
-    // `scrollHeight` do `.sh-body` — rolado perto do fim, o navegador CORRIGE (clampa) o
-    // `scrollTop` de volta ao novo máximo, e essa correção dispara um scroll "fantasma" na
-    // direção de SUBIR que não veio do polegar. Sem tratar, a histerese abaixo lê o clamp
-    // como gesto de subir e reabre o dock no instante em que ele acabou de fechar. Detectar
-    // isso DENTRO do handler de scroll (comparando `scrollHeight` só quando um evento
-    // dispara) é frágil: se o `scrollTop` de antes já coubesse no novo máximo, nenhum clamp
-    // é necessário, nenhum evento dispara, e a referência antiga sobrevive para confundir o
-    // PRÓXIMO scroll genuíno. Por isso a checagem roda à parte por alguns frames — pega a
-    // mudança de altura não importa se ela produziu um evento de scroll ou não — mas só numa
-    // JANELA CURTA após cada troca de `dockMin` (a única hora em que a reserva pode mudar),
-    // não o tempo inteiro: um rAF permanente giraria para sempre, mesmo parado.
-    const burstTick = () => {
-      burstFrame = null;
-      // Só ENCOLHER suprime — conteúdo novo que CRESCE o scroll (ex.: a mesma rolagem que
-      // abriu a rajada, se ela veio da conversa hidratando) não é o clamp que este código
-      // existe para filtrar, e suprimir os dois sentidos perderia um "subir" genuíno que o
-      // polegar disparasse durante a janela.
-      if (body.scrollHeight < lastScrollHeight) {
-        // A janela cobre o atraso de despacho do evento de scroll do clamp (o reflow do
-        // padding e o clamp do `scrollTop` são síncronos; o browser publica o evento no
-        // próximo tick) sem prender a página bloqueando "subir" por muito tempo depois.
-        suppressUpUntil = performance.now() + 150;
-      }
-      lastScrollHeight = body.scrollHeight;
-      if (performance.now() < burstUntil) burstFrame = requestAnimationFrame(burstTick);
-    };
-    const startBurst = () => {
-      burstUntil = performance.now() + 300;
-      // `??=` sai da memoização automática do React Compiler (BuildHIR não trata o operador) —
-      // o `if` explícito custa uma linha de lint suprimida, nunca o componente inteiro.
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      if (burstFrame === null) burstFrame = requestAnimationFrame(burstTick);
-    };
+    lastScrollTopRef.current = body.scrollTop;
     const onScroll = () => {
       const y = body.scrollTop;
-      const suppressed = performance.now() < suppressUpUntil;
+      const last = lastScrollTopRef.current;
       // Histerese de 8px: micro-rolagens (bounce, ajuste de layout) não piscam o dock.
       if (y > last + 8 && y > 64) {
         setDockMin(true);
-        startBurst();
-      } else if (!suppressed && (y < last - 8 || y <= 64)) {
+      } else if (y < last - 8 || y <= 64) {
         setDockMin(false);
-        startBurst();
       }
-      last = y;
+      lastScrollTopRef.current = y;
     };
     body.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      body.removeEventListener("scroll", onScroll);
-      if (burstFrame !== null) cancelAnimationFrame(burstFrame);
-    };
+    return () => body.removeEventListener("scroll", onScroll);
   }, []);
+
+  // Encolher a reserva do dock (`--dock-reserve`, redesign.css) quando ele soma reduz o
+  // `scrollHeight` do `.sh-body` — rolado perto do fim, o navegador CORRIGE (clampa) o
+  // `scrollTop` de volta ao novo máximo, e essa correção dispara um scroll "fantasma" na
+  // direção de SUBIR que não veio do polegar. Sem tratar, a histerese acima lê o clamp como
+  // gesto de subir e reabre o dock no instante em que ele acabou de fechar.
+  //
+  // A correção não tenta DISTINGUIR o evento fantasma por tempo ou por comparar alturas —
+  // as duas abordagens correm atrás do MESMO evento de "scroll" nativo que a correção
+  // dispara, e o vencedor da corrida varia com a carga da CPU (medido: um `ResizeObserver`
+  // no `.sh-body` pega a maioria dos casos, mas o spec do HTML roda os passos de scroll
+  // ANTES de notificar `ResizeObserver` na mesma atualização de render — o observer sempre
+  // chega tarde demais para o PRÓPRIO evento que ele tentaria suprimir). Em vez de correr
+  // atrás do evento, este efeito RESSINCRONIZA a referência (`lastScrollTopRef`) assim que
+  // `dockMin` muda: ler `body.scrollTop` aqui força o reflow pendente (o valor já vem
+  // clampado pelo browser) e grava esse valor como a nova baseline ANTES do browser
+  // despachar o "scroll" do clamp — `useLayoutEffect` roda de forma síncrona logo após o
+  // commit, sempre antes da tarefa (macrotask) que entrega esse evento. Quando o fantasma
+  // chega, `y === last` (nada mudou do ponto de vista da baseline) e a histerese não reage.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    lastScrollTopRef.current = body.scrollTop;
+  }, [dockMin]);
 
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- os dois observers são desligados no retorno (mo.disconnect + io.disconnect); o observe vive num closure que a análise estática não rastreia
   useEffect(() => {

@@ -450,10 +450,11 @@
      bottom: 0`, regra 21, ex.: a Mia) lê ESTE padding como o respiro que separa a sticky do
      fim da rolagem — encolher aqui move a sticky (que gruda no conteúdo por herança de fluxo)
      junto com o dock, nunca depois dele. A oscilação óbvia (encolher aqui reduz o
-     `scrollHeight`; rolado até o fim, o navegador correige o `scrollTop` de volta, disparando
+     `scrollHeight`; rolado até o fim, o navegador corrige o `scrollTop` de volta, disparando
      um scroll "fantasma" que a histerese do dock lê como gesto de subir e reabre o dock) é
-     resolvida no PRODUTOR do evento, não aqui: `AppShell` ignora um scroll cujo `scrollHeight`
-     mudou desde o último — ver o comentário em `handleScroll`. */
+     resolvida no PRODUTOR do evento, não aqui: `AppShell` ressincroniza a baseline da
+     histerese assim que `dockMin` muda, antes do browser despachar o "scroll" do clamp — ver
+     o `useLayoutEffect` logo abaixo do listener de scroll em `AppShell`. */
   .sh--dock-min .sh-body {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
