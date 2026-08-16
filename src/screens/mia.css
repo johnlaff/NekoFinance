@@ -188,6 +188,10 @@
   font-size: var(--fs-body);
   line-height: var(--lh-relaxed);
   color: var(--text);
+  /* O modelo escreve item de lista com quebra de linha própria (`withMarkdownLite` troca o
+     traço pelo marcador, mas a quebra em si é conteúdo, não decoração de CSS) — sem
+     `pre-wrap` a bolha colapsaria a lista inteira numa única linha corrida. */
+  white-space: pre-wrap;
 }
 .mia__note {
   margin-top: var(--space-5);
