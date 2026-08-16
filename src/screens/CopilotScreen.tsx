@@ -44,6 +44,7 @@ import {
   fetchMiaConsent,
   fetchTags,
   timeLabel,
+  withMarkdownLite,
   SUGGESTIONS,
   type AnswerCta,
   type ContextFact,
@@ -70,10 +71,15 @@ const TONE_CLASS: Record<Tone, string> = {
 /* ------------------------------------------------------------------ */
 
 function Prose({ spans }: { spans: Span[] }) {
+  // O modelo (e o histórico persistido antes desta expansão existir) escreve negrito e listas
+  // em markdown cru dentro de um span de texto — `withMarkdownLite` interpreta essa sintaxe
+  // aqui, no boundary de leitura, para renderizar igual em toda origem (resposta local,
+  // rodada ao vivo, conversa restaurada).
+  const expanded = withMarkdownLite(spans);
   // A identidade de um trecho é o conteúdo dele; repetições ganham um contador. Índice de
   // array seria frágil se a frase mudasse de forma, e aqui não custa nada ser exato.
   const seen = new Map<string, number>();
-  const keyed = spans.map((span) => {
+  const keyed = expanded.map((span) => {
     const base = span.t === "money" ? `money:${span.cents}` : `${span.t}:${span.s}`;
     const nth = (seen.get(base) ?? 0) + 1;
     seen.set(base, nth);

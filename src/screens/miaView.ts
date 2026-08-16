@@ -288,6 +288,49 @@ export function plainText(spans: Span[]): string {
   return spans.map((s) => (s.t === "money" ? formatBRL(s.cents) : s.s)).join("");
 }
 
+/** Negrito do modelo (`**texto**`) — a convenção que os provedores de LLM usam em prosa. */
+const BOLD_RE = /\*\*(.+?)\*\*/g;
+
+/** Item de lista (`- item` ou `* item`) que o modelo devolve. */
+const BULLET_RE = /^(\s*)[-*]\s+(.*)$/;
+
+/**
+ * Expande negrito e itens de lista que chegam como sintaxe crua de markdown dentro de um span
+ * `text` em spans estruturados (`text`/`strong`) — a mesma forma que as respostas locais já
+ * montam à mão. A resposta do runtime nasce com o texto inteiro do modelo num único span
+ * `text` (`miaRuntime.applyMiaScreenEvent`), sem interpretar a sintaxe que ele escreve por
+ * padrão; uma resposta lida do histórico carrega o que quer que tenha sido persistido naquele
+ * formato. Rodar aqui — no boundary de leitura, não na ingestão — cobre as duas origens com o
+ * MESMO texto de entrada, sem depender de quando a rodada aconteceu ou de reprocessar a
+ * conversa guardada. Spans que já chegam tipados (`strong`, `money`) atravessam intactos: só
+ * prosa crua é candidata a carregar sintaxe do modelo.
+ */
+export function withMarkdownLite(spans: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const span of spans) {
+    if (span.t !== "text") {
+      out.push(span);
+      continue;
+    }
+    const text = span.s
+      .split("\n")
+      .map((line) => {
+        const bullet = BULLET_RE.exec(line);
+        return bullet ? `${bullet[1]}• ${bullet[2]}` : line;
+      })
+      .join("\n");
+    let lastIndex = 0;
+    for (const match of text.matchAll(BOLD_RE)) {
+      const index = match.index ?? 0;
+      if (index > lastIndex) out.push(t(text.slice(lastIndex, index)));
+      out.push(b(match[1] ?? ""));
+      lastIndex = index + match[0].length;
+    }
+    if (lastIndex < text.length) out.push(t(text.slice(lastIndex)));
+  }
+  return out;
+}
+
 /** "Hoje" · "Ontem" · "2 de julho" — o marco que separa os blocos da conversa. */
 export function dayMarkLabel(dateISO: string, todayISO: string): string {
   if (dateISO === todayISO) return "Hoje";

@@ -220,15 +220,62 @@ export function AppShell({
     const body = bodyRef.current;
     if (!body) return;
     let last = body.scrollTop;
+    let lastScrollHeight = body.scrollHeight;
+    let suppressUpUntil = 0;
+    let burstUntil = 0;
+    let burstFrame: number | null = null;
+    // Encolher a reserva do dock (`--dock-reserve`, redesign.css) quando ele soma reduz o
+    // `scrollHeight` do `.sh-body` — rolado perto do fim, o navegador CORRIGE (clampa) o
+    // `scrollTop` de volta ao novo máximo, e essa correção dispara um scroll "fantasma" na
+    // direção de SUBIR que não veio do polegar. Sem tratar, a histerese abaixo lê o clamp
+    // como gesto de subir e reabre o dock no instante em que ele acabou de fechar. Detectar
+    // isso DENTRO do handler de scroll (comparando `scrollHeight` só quando um evento
+    // dispara) é frágil: se o `scrollTop` de antes já coubesse no novo máximo, nenhum clamp
+    // é necessário, nenhum evento dispara, e a referência antiga sobrevive para confundir o
+    // PRÓXIMO scroll genuíno. Por isso a checagem roda à parte por alguns frames — pega a
+    // mudança de altura não importa se ela produziu um evento de scroll ou não — mas só numa
+    // JANELA CURTA após cada troca de `dockMin` (a única hora em que a reserva pode mudar),
+    // não o tempo inteiro: um rAF permanente giraria para sempre, mesmo parado.
+    const burstTick = () => {
+      burstFrame = null;
+      // Só ENCOLHER suprime — conteúdo novo que CRESCE o scroll (ex.: a mesma rolagem que
+      // abriu a rajada, se ela veio da conversa hidratando) não é o clamp que este código
+      // existe para filtrar, e suprimir os dois sentidos perderia um "subir" genuíno que o
+      // polegar disparasse durante a janela.
+      if (body.scrollHeight < lastScrollHeight) {
+        // A janela cobre o atraso de despacho do evento de scroll do clamp (o reflow do
+        // padding e o clamp do `scrollTop` são síncronos; o browser publica o evento no
+        // próximo tick) sem prender a página bloqueando "subir" por muito tempo depois.
+        suppressUpUntil = performance.now() + 150;
+      }
+      lastScrollHeight = body.scrollHeight;
+      if (performance.now() < burstUntil) burstFrame = requestAnimationFrame(burstTick);
+    };
+    const startBurst = () => {
+      burstUntil = performance.now() + 300;
+      // `??=` sai da memoização automática do React Compiler (BuildHIR não trata o operador) —
+      // o `if` explícito custa uma linha de lint suprimida, nunca o componente inteiro.
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      if (burstFrame === null) burstFrame = requestAnimationFrame(burstTick);
+    };
     const onScroll = () => {
       const y = body.scrollTop;
+      const suppressed = performance.now() < suppressUpUntil;
       // Histerese de 8px: micro-rolagens (bounce, ajuste de layout) não piscam o dock.
-      if (y > last + 8 && y > 64) setDockMin(true);
-      else if (y < last - 8 || y <= 64) setDockMin(false);
+      if (y > last + 8 && y > 64) {
+        setDockMin(true);
+        startBurst();
+      } else if (!suppressed && (y < last - 8 || y <= 64)) {
+        setDockMin(false);
+        startBurst();
+      }
       last = y;
     };
     body.addEventListener("scroll", onScroll, { passive: true });
-    return () => body.removeEventListener("scroll", onScroll);
+    return () => {
+      body.removeEventListener("scroll", onScroll);
+      if (burstFrame !== null) cancelAnimationFrame(burstFrame);
+    };
   }, []);
 
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- os dois observers são desligados no retorno (mo.disconnect + io.disconnect); o observe vive num closure que a análise estática não rastreia
@@ -270,7 +317,11 @@ export function AppShell({
   }, [active]);
 
   return (
-    <div className="sh">
+    // O modificador espelha `dockMin` no CSS: `.sh-body` (redesign.css) encolhe a reserva do
+    // dock quando ele some no scroll, para um composer ancorado (`position: sticky`, a Mia)
+    // acompanhar — sem isso ele fica paralisado na posição calculada para o dock ainda
+    // visível, com uma faixa vazia do tamanho dele sobrando abaixo.
+    <div className={`sh${dockMin ? " sh--dock-min" : ""}`}>
       <aside className="sh-side">
         <div className="sh-brand">
           {/* Decorativo: o texto irmão "Neko" é o nome; sem isto o leitor anuncia 2×. */}

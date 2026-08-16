@@ -10,6 +10,7 @@ import {
   routeQuestion,
   SUGGESTIONS,
   timeLabel,
+  withMarkdownLite,
   type MiaFacts,
   type Span,
 } from "./miaView";
@@ -726,5 +727,39 @@ describe("selo epistêmico", () => {
       const marked = ask(question).receipt?.filter((l) => l.mark && l.result) ?? [];
       expect(marked).toEqual([]);
     }
+  });
+});
+
+// ---- markdown-lite do modelo -------------------------------------------------
+
+describe("withMarkdownLite", () => {
+  it("expande negrito num span de texto em spans text/strong", () => {
+    const spans: Span[] = [{ t: "text", s: "Hoje sobrou **R$ 180,00** este mês." }];
+    expect(withMarkdownLite(spans)).toEqual([
+      { t: "text", s: "Hoje sobrou " },
+      { t: "strong", s: "R$ 180,00" },
+      { t: "text", s: " este mês." },
+    ]);
+  });
+
+  it("troca o traço da lista pelo marcador, preservando a quebra de linha", () => {
+    const spans: Span[] = [
+      { t: "text", s: "**R$ 0,00**\n\n- **Margem para economia:** zerada." },
+    ];
+    expect(withMarkdownLite(spans)).toEqual([
+      { t: "strong", s: "R$ 0,00" },
+      { t: "text", s: "\n\n• " },
+      { t: "strong", s: "Margem para economia:" },
+      { t: "text", s: " zerada." },
+    ]);
+  });
+
+  it("não mexe em spans já tipados (strong, money) nem em texto sem sintaxe", () => {
+    const spans: Span[] = [
+      { t: "money", cents: 18_000 },
+      { t: "strong", s: "já em negrito" },
+      { t: "text", s: "prosa comum, sem sintaxe nenhuma" },
+    ];
+    expect(withMarkdownLite(spans)).toEqual(spans);
   });
 });

@@ -439,8 +439,23 @@
     font-weight: 600;
   }
   .sh-body {
+    --dock-reserve: 96px;
     padding-top: calc(env(safe-area-inset-top, 0px) + 62px);
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-reserve));
+    transition: padding-bottom var(--dur-slow) var(--ease-standard);
+  }
+  /* O dock flutuante encolhe ao rolar (`dockMin` em AppShell, espelhado como `.sh--dock-min`
+     na raiz) — a reserva que o mantinha longe do conteúdo tem que encolher junto, senão sobra
+     uma faixa vazia do tamanho exato do dock. Um composer ancorado (`position: sticky;
+     bottom: 0`, regra 21, ex.: a Mia) lê ESTE padding como o respiro que separa a sticky do
+     fim da rolagem — encolher aqui move a sticky (que gruda no conteúdo por herança de fluxo)
+     junto com o dock, nunca depois dele. A oscilação óbvia (encolher aqui reduz o
+     `scrollHeight`; rolado até o fim, o navegador correige o `scrollTop` de volta, disparando
+     um scroll "fantasma" que a histerese do dock lê como gesto de subir e reabre o dock) é
+     resolvida no PRODUTOR do evento, não aqui: `AppShell` ignora um scroll cujo `scrollHeight`
+     mudou desde o último — ver o comentário em `handleScroll`. */
+  .sh--dock-min .sh-body {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .sh-bodyinner {
     padding: 10px 16px 24px;

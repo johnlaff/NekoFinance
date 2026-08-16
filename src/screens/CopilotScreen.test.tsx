@@ -318,4 +318,58 @@ describe("CopilotScreen (Mia)", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe("markdown do modelo (negrito e lista)", () => {
+    // A resposta do runtime chega como texto corrido do modelo, com a sintaxe de markdown
+    // que ele escreve por padrão (negrito `**...**`, item de lista `- ...`) — nunca
+    // interpretada antes desta tela. O caminho do histórico é o que reproduz o relato
+    // original: uma resposta já persistida (de uma sessão anterior) volta pela hidratação
+    // de `load_mia_conversation`, não por uma rodada nova — a prova tem que passar por ali,
+    // não pelo atalho de montar o span já formatado à mão.
+    const MARKDOWN_ANSWER = {
+      text: [
+        {
+          t: "text",
+          s: "**R$ 0,00**\n\n- **Margem para economia:** ainda não há registro este mês.",
+        },
+      ],
+      provenance: "runtime",
+      transparency: "Provedor: openrouter · Modelo: demo · Custo: US$ 0,0012",
+    };
+
+    it("negrito e item de lista restaurados do histórico renderizam formatados, não crus", async () => {
+      mockCommands({
+        get_dashboard_summary: SUMMARY,
+        get_forecast: FORECAST,
+        get_mia_consent: MIA_CONSENT,
+        load_mia_conversation: [
+          {
+            author: "voce",
+            question: "Qual a margem para economizar este mês?",
+            answer: null,
+            at_iso: "2026-07-15T21:50",
+          },
+          {
+            author: "mia",
+            question: null,
+            answer: MARKDOWN_ANSWER,
+            at_iso: "2026-07-15T21:50",
+          },
+        ],
+      });
+      renderMia();
+
+      const log = await screen.findByRole("log");
+      // O negrito vira `<b>`, o mesmo elemento que as respostas locais já usam — texto e
+      // marcação uniformes entre resposta calculada e resposta do provedor externo.
+      const money = await within(log).findByText("R$ 0,00");
+      expect(money.tagName).toBe("B");
+      const label = within(log).getByText("Margem para economia:");
+      expect(label.tagName).toBe("B");
+      // Nenhum asterisco de markdown sobrevive ao render, e o traço da lista virou marcador
+      // visível na própria linha (a bolha preserva a quebra: `white-space: pre-wrap`).
+      expect(log.textContent).not.toContain("**");
+      expect(log.textContent).toMatch(/•\s*Margem para economia/);
+    });
+  });
 });
