@@ -2,17 +2,27 @@
  * Reveal circular do tema — módulo compartilhado entre o ThemeToggle (produção) e o
  * diagnóstico de animações das Configurações (botão "Testar reveal", mesmo caminho).
  *
- * Técnica: quando a View Transitions API existe (Chromium/WebView2), ela tira snapshot do
+ * Técnica: quando a View Transitions API existe NUM BROWSER COMUM, ela tira snapshot do
  * tema antigo e do novo e o novo é revelado por um círculo de clip-path do clique — os
- * elementos da UI nunca somem. Fallback (jsdom/engines sem a API): cobre com um overlay da
- * cor antiga e abre um FURO circular via `clip-path: path()`. A duração é SEMPRE uma
- * constante — o token resolve para "~0" via getComputedStyle neste WebView2. Evitados:
- * `opacity` (o compositor não a pinta aqui) e `transform: scale()` de 0 num elemento
- * gigante (raster inicial vazio).
+ * elementos da UI nunca somem. Caminho padrão (jsdom/engines sem a API, e SEMPRE dentro do
+ * shell do Tauri): cobre com um overlay da cor antiga e abre um FURO circular via
+ * `clip-path: path()`. A duração é SEMPRE uma constante — o token resolve para "~0" via
+ * getComputedStyle no WebView2. Evitados: `opacity` (o compositor não a pinta aqui) e
+ * `transform: scale()` de 0 num elemento gigante (raster inicial vazio).
+ *
+ * `startViewTransition` existir não basta dentro do Tauri: a WebView embutida (WebView2 no
+ * Windows, WebView do sistema no Android, WebKitGTK no Linux) integra a renderização na
+ * hierarquia de view nativa em vez de compor como textura separada, como um browser faz — o
+ * mesmo motivo pelo qual o pseudo-elemento `::view-transition-new(root)` não pinta a
+ * animação de clip-path no WebView2. Um WebView Android atualizado (Chromium recente) expõe
+ * a API sem herdar essa garantia de composição, então a detecção de API sozinha não é
+ * sinal confiável nesse modelo — daí `isTauri` gatear o caminho, não só `typeof`.
  *
  * Cada etapa grava um evento em `nk-motion-log:v1` (localStorage, últimos 8) — o
  * diagnóstico exibe o log para depurar o caminho real sem devtools.
  */
+
+import { isTauri } from "../lib/env";
 
 export type Theme = "dark" | "light";
 
@@ -95,8 +105,9 @@ function coverWithHolePath(
 
 /**
  * Reveal "buraco crescente", só com `clip-path` — a única primitiva confirmada
- * visualmente neste WebView2 (`opacity` não pinta aqui; os pseudo-elementos de View
- * Transitions também não; daí este caminho manual):
+ * visualmente nas WebViews embutidas do Tauri (`opacity` não pinta no WebView2; os
+ * pseudo-elementos de View Transitions dependem de um modelo de composição que essas
+ * WebViews não garantem; daí este caminho manual ser o padrão sob `isTauri`):
  *
  * 1. O tema é trocado JÁ (a UI nova pinta em ~0-9ms neste hardware) e imediatamente
  *    coberta por um overlay da cor do tema ANTIGO — a repintura acontece escondida.
@@ -119,13 +130,15 @@ export function playThemeReveal(
   next: Theme,
   apply: () => void,
 ): void {
-  // Caminho preferido: View Transitions API. Ela tira um snapshot do tema ANTIGO (a UI
-  // real, com todos os elementos) e do NOVO; o antigo fica embaixo enquanto um círculo de
-  // clip-path revela o novo a partir do clique — os elementos NUNCA somem (o problema da
-  // cobertura chapada). Duração FIXA (o token resolve para "~0" via getComputedStyle neste
-  // WebView2, ver REVEAL_DURATION_MS). Fallback abaixo cobre jsdom/engines sem a API.
+  // Caminho preferido: View Transitions API, só FORA do Tauri (browser comum — dev server
+  // aberto numa aba, por exemplo). Ela tira um snapshot do tema ANTIGO (a UI real, com
+  // todos os elementos) e do NOVO; o antigo fica embaixo enquanto um círculo de clip-path
+  // revela o novo a partir do clique — os elementos NUNCA somem (o problema da cobertura
+  // chapada). Duração FIXA (o token resolve para "~0" via getComputedStyle no WebView2, ver
+  // REVEAL_DURATION_MS). Dentro do Tauri (desktop ou Android) a API existir não garante que
+  // o pseudo-elemento pinte — cai direto no caminho manual abaixo, o único confirmado.
   const doc = document as DocWithVT;
-  if (typeof doc.startViewTransition === "function") {
+  if (!isTauri && typeof doc.startViewTransition === "function") {
     logMotion(`reveal→${next}: via View Transitions (${REVEAL_DURATION_MS}ms)`);
     try {
       const transition = doc.startViewTransition(() => apply());
