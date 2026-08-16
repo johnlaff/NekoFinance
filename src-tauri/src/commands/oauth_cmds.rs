@@ -7,6 +7,7 @@ pub async fn start_oauth_flow(
     app: tauri::AppHandle,
     state: tauri::State<'_, OAuthStateStore>,
     app_dir: tauri::State<'_, AppDataDir>,
+    pool: tauri::State<'_, SqlitePool>,
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<String, String> {
@@ -23,6 +24,7 @@ pub async fn start_oauth_flow(
     open_auth_url(&app, &auth_url)?;
 
     let app_dir_path = app_dir.0.clone();
+    let pool_for_bg = pool.inner().clone();
     let config_for_bg =
         oauth::pkce::OAuthConfig::google(config.client_id.clone(), config.client_secret.clone());
 
@@ -33,7 +35,15 @@ pub async fn start_oauth_flow(
         *guard = Some(oauth_state);
 
         tokio::spawn(async move {
-            match oauth::run_oauth_flow(config_for_bg, flow_state, app_dir_path, callback).await {
+            match oauth::run_oauth_flow(
+                config_for_bg,
+                flow_state,
+                app_dir_path,
+                callback,
+                &pool_for_bg,
+            )
+            .await
+            {
                 Ok(_token) => {}
                 Err(e) => eprintln!("OAuth flow error: {e}"),
             }

@@ -43,11 +43,21 @@ impl OAuthCallback {
 /// Abrir o navegador/Custom Tab é responsabilidade de quem chama (`commands::oauth_cmds`, que tem o
 /// `AppHandle` que o Android precisa para abrir a Custom Tab via `tauri-plugin-opener`) — este fluxo
 /// só espera o `code` chegar por `callback`, valida e troca.
+///
+/// `pool` grava `app_setting.sheets_client_id` no MESMO ponto em que o token acaba de ir para o
+/// cofre: conexão bem-sucedida É "sync configurado", então o client id que o boot
+/// (`sync_task::resolve_client_id`) e a renovação em segundo plano precisam já fica disponível
+/// aqui, sem depender de um IMPORT ter rodado (`GoogleSheetsPanel.tsx` grava a mesma chave, mas só
+/// quando uma planilha é importada). Sem esta gravação, um aparelho recém-conectado sem nenhum
+/// import não tem de onde o check-out do boot ler o client id, e silencia mesmo com um snapshot
+/// remoto disponível para restaurar (issue #475). Cobre tanto a primeira conexão quanto a
+/// RECONEXÃO — as duas passam por `start_oauth_flow`.
 pub async fn run_oauth_flow(
     config: pkce::OAuthConfig,
     state: pkce::OAuthState,
     app_dir: std::path::PathBuf,
     callback: OAuthCallback,
+    pool: &sqlx::SqlitePool,
 ) -> Result<token_store::StoredToken, String> {
     let (code, returned_state) = callback.wait_for_code().await?;
 
@@ -76,6 +86,16 @@ pub async fn run_oauth_flow(
 
     // Store token
     token_store::store_token(&app_dir, &token)?;
+
+    // Best-effort: o token já está gravado e a conexão já é um sucesso do ponto de vista do dono —
+    // uma falha aqui não pode desfazer isso. Sem o client id persistido, a defesa em
+    // `resolve_drive_client_best_effort_at` cobre o residual (token válido sem client id) com um
+    // aviso próprio na tela de Conexão.
+    if let Err(e) =
+        crate::commands::app_setting_set(pool, "sheets_client_id", &config.client_id).await
+    {
+        eprintln!("OAuth: falha ao persistir sheets_client_id: {e}");
+    }
 
     Ok(token)
 }
@@ -157,8 +177,16 @@ async fn exchange_token(
 
 #[cfg(test)]
 mod tests {
-    use super::{OAuthCallback, constant_time_eq, secret_for_exchange};
+    use super::{OAuthCallback, constant_time_eq, run_oauth_flow, secret_for_exchange};
+    use crate::oauth::pkce::{OAuthConfig, OAuthState};
     use crate::oauth::redirect::RedirectStrategy;
+    use std::path::PathBuf;
+
+    fn test_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("neko-oauth-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn constant_time_eq_matches_only_identical() {
@@ -252,5 +280,155 @@ mod tests {
             .await
             .expect_err("canal fechado sem resposta deve virar erro, nunca travar");
         assert!(error.contains("canal de retorno fechado"));
+    }
+
+    // --- Issue #475: a conexão persiste o client id no mesmo passo em que grava o token --------
+
+    /// RAII do fallback inseguro de armazenamento de token (`NEKO_INSECURE_FILE_FALLBACK`):
+    /// remove a variável de ambiente ao sair de escopo mesmo quando o trecho guardado entra em
+    /// panic (ex.: uma asserção falha) — sem isto, um panic no meio do caminho pularia o
+    /// `remove_var` e vazaria a variável global (processo inteiro) para o próximo teste que
+    /// rodar, mesmo sem `NEKO_INSECURE_FILE_FALLBACK` ter sido pedido por ele.
+    struct InsecureFileFallbackEnvVar;
+
+    impl InsecureFileFallbackEnvVar {
+        fn enabled() -> Self {
+            // SAFETY: serializado por `secret_vault::INSECURE_FILE_FALLBACK_LOCK`, sempre travado
+            // pelo chamador antes de construir este guard.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            Self
+        }
+    }
+
+    impl Drop for InsecureFileFallbackEnvVar {
+        fn drop(&mut self) {
+            // SAFETY: mesmo racional do `set_var` em `enabled()`.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+    }
+
+    /// Roda `run_oauth_flow` de ponta a ponta contra um endpoint de troca mockado. Devolve
+    /// `app_dir` (um `PathBuf` simples, sem laço com o runtime) para o chamador conferir o cofre
+    /// com `token_store::load_token` (síncrono) depois.
+    ///
+    /// `run_oauth_flow` grava o token via `token_store::store_token` (síncrono) DEPOIS de um
+    /// `.await` de rede — não dá para isolar essa escrita num bloco síncrono só do jeito que os
+    /// outros testes deste repo guardam `NEKO_INSECURE_FILE_FALLBACK` (o comentário do módulo
+    /// promete "nunca atravessa um `.await`" com o `std::sync::Mutex` do guard). A saída é reusar
+    /// o MESMO `Runtime` em três chamadas `block_on` sequenciais — `SqlitePool`/`mockito::ServerGuard`
+    /// sobrevivem porque nunca trocam de runtime — e ligar a variável de ambiente só ao REDOR da
+    /// chamada do meio (`run_oauth_flow`, a única que precisa dela): mock server, pool e config
+    /// nascem ANTES, fora da janela ligada; as asserções rodam DEPOIS, também fora dela.
+    fn assert_connect_persists_client_id(
+        client_id: &str,
+        access_token: &str,
+        refresh_token: &str,
+    ) -> PathBuf {
+        let rt = tokio::runtime::Runtime::new().expect("runtime de teste");
+
+        // `_server` (o `ServerGuard`) precisa sobreviver até a chamada de `run_oauth_flow` mais
+        // abaixo de fato bater no endpoint mockado — mantido vivo aqui, no escopo da função, em
+        // vez de só dentro do primeiro `block_on`.
+        let (_server, app_dir, pool, config, oauth_state, rx) = rt.block_on(async {
+            let mut server = mockito::Server::new_async().await;
+            server
+                .mock("POST", "/token")
+                .with_status(200)
+                .with_body(format!(
+                    r#"{{"access_token":"{access_token}","refresh_token":"{refresh_token}","expires_in":3600,"scope":""}}"#
+                ))
+                .create_async()
+                .await;
+
+            let dir = test_dir();
+            let app_dir = dir.join("app-dir");
+            std::fs::create_dir_all(&app_dir).unwrap();
+            let db_path = dir.join("neko-finance.db");
+            let pool = crate::snapshot::checkout::open_migrated_pool(&db_path)
+                .await
+                .expect("pool de teste");
+
+            let mut config = OAuthConfig::google(client_id.to_string(), None);
+            config.token_url = format!("{}/token", server.url());
+            let oauth_state = OAuthState::new(RedirectStrategy::DeepLink);
+            let csrf = oauth_state.csrf_token.secret().to_string();
+
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            tx.send(Ok(("auth-code-475".to_string(), Some(csrf))))
+                .expect("o canal deve aceitar o envio");
+
+            (server, app_dir, pool, config, oauth_state, rx)
+        });
+
+        // Janela ligada ao mínimo: só a chamada abaixo precisa do fallback inseguro. Guard com
+        // Drop — mesmo se `run_oauth_flow` entrar em panic, a variável de ambiente global some
+        // antes de qualquer outro teste rodar.
+        let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env_guard = InsecureFileFallbackEnvVar::enabled();
+        rt.block_on(run_oauth_flow(
+            config,
+            oauth_state,
+            app_dir.clone(),
+            OAuthCallback::DeepLink(rx),
+            &pool,
+        ))
+        .expect("token exchange mockado deve suceder");
+        drop(_env_guard);
+        drop(_guard);
+
+        rt.block_on(async {
+            // Sem esta gravação (issue #475), `sheets_client_id` só seria gravado por um IMPORT
+            // (`GoogleSheetsPanel.tsx`), nunca pela conexão em si — um aparelho recém-conectado
+            // sem nenhum import não teria de onde o boot ler o client id.
+            let persisted = crate::commands::app_setting_get(&pool, "sheets_client_id")
+                .await
+                .unwrap();
+            assert_eq!(
+                persisted.as_deref(),
+                Some(client_id),
+                "a conexão deve persistir o client id — sem isto o check-out do boot nunca \
+                 resolve um client id antes do primeiro import"
+            );
+
+            // A costura completa: o resolver que o boot usa de fato enxerga o valor gravado.
+            let resolved = crate::sync_task::resolve_client_id(&pool).await;
+            assert_eq!(
+                resolved.as_deref(),
+                Some(client_id),
+                "resolve_client_id deve resolver o client id logo após a conexão, sem depender \
+                 de um import prévio"
+            );
+        });
+
+        app_dir
+    }
+
+    #[test]
+    fn conectar_persiste_o_client_id_no_mesmo_passo_que_grava_o_token() {
+        let app_dir = assert_connect_persists_client_id(
+            "client-475.apps.googleusercontent.com",
+            "ya29.novo",
+            "1//novo",
+        );
+
+        // O token vai para o cofre — pré-condição independente do client id.
+        let stored = crate::oauth::token_store::load_token(&app_dir)
+            .expect("ler o cofre não deve falhar")
+            .expect("o token deve ter sido gravado");
+        assert_eq!(stored.access_token, "ya29.novo");
+    }
+
+    #[test]
+    fn reconectar_tambem_persiste_o_client_id() {
+        // A reconexão (`SettingsScreen.tsx::handleReconnect`) passa pelo MESMO comando
+        // (`start_oauth_flow` → `run_oauth_flow`) que a primeira conexão — cobrir separadamente
+        // documenta que não há um segundo caminho que precise do mesmo fix.
+        assert_connect_persists_client_id(
+            "client-reconexao.apps.googleusercontent.com",
+            "ya29.reconexao",
+            "1//reconexao",
+        );
     }
 }

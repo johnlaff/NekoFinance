@@ -1167,9 +1167,11 @@ export interface DriveCheckinInfo {
   /** De qual aparelho veio o snapshot baixado no último check-out — nunca a identidade deste. */
   last_checkout_device_id: string | null;
   /** Rótulo fechado do desfecho do ÚLTIMO check-out que merece aviso: `"refused_newer_schema"`
-   *  (o remoto tem schema mais nova — orientar a atualizar o app) ou `"error"` (rede/integridade
-   *  — a leitura não aconteceu, o app tenta de novo na próxima abertura). `null` quando o
-   *  check-out mais recente não tem nada a avisar. */
+   *  (o remoto tem schema mais nova — orientar a atualizar o app), `"error"` (rede/integridade —
+   *  a leitura não aconteceu, o app tenta de novo na próxima abertura), `"newer_available"` (a
+   *  sonda leve de foco viu o remoto avançar, sem trocar arquivo) ou `"missing_client_id"`
+   *  (token válido no cofre sem `sheets_client_id` persistido — orientar reconectar uma vez).
+   *  `null` quando o check-out mais recente não tem nada a avisar. */
   last_checkout_outcome: string | null;
   /** Complemento do desfecho acima (versões de schema na recusa, mensagem de erro na falha). */
   last_checkout_outcome_detail: string | null;

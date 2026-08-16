@@ -17,7 +17,10 @@
 //! cobrem as funções `_core`; os wrappers públicos são deliberadamente finos o bastante para não
 //! precisarem de teste próprio.
 
-use super::{checkout::resolve_drive_client_best_effort, state};
+use super::{
+    checkout::{ClientResolution, resolve_drive_client_best_effort},
+    state,
+};
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::time::Duration;
@@ -82,8 +85,15 @@ pub(crate) async fn run_checkin_attempt_core(
     }
 
     let drive = match resolve_drive_client_best_effort(pool, app_dir).await {
-        Ok(Some(drive)) => drive,
-        Ok(None) => return Ok(false),
+        Ok(ClientResolution::Ready(drive)) => drive,
+        // `MissingClientId` (issue #475) tem aviso próprio no check-out do boot e na sonda de
+        // foco — que já compartilham `snapshot_state.last_checkout_outcome` com a tela de
+        // Conexão. O check-in automático não tem um campo de aviso equivalente; recusar em
+        // silêncio (mesmo tratamento de `NotConfigured`) evita duplicar bookkeeping sem perder
+        // visibilidade, porque um dos outros dois gatilhos já cobriu o mesmo boot/foco.
+        Ok(ClientResolution::NotConfigured | ClientResolution::MissingClientId) => {
+            return Ok(false);
+        }
         Err(e) => {
             eprintln!("[snapshot/checkin:{trigger:?}] {e}");
             return Ok(false);

@@ -550,6 +550,12 @@ pub(crate) async fn resolve_conflict_use_remote_core(
         .join(format!("neko-conflict-{}.db", uuid::Uuid::new_v4()));
     restore::stage_downloaded_snapshot(&tmp_path, &db_bytes).await?;
 
+    // A credencial OAuth deste aparelho (issue #479) precisa sobreviver à troca pelo mesmo motivo
+    // do bloco abaixo — capturada ANTES de fechar o pool, para `reseed_device_identity_setting`
+    // recolocar depois do swap e nunca deixar a credencial de quem publicou (o "outro aparelho"
+    // desta tela de conflito) sobrescrever a deste aparelho.
+    let device_identity_setting = state::capture_device_identity_setting(&pool).await?;
+
     // Ponto de não-retorno — captura ANTES de fechar o pool: o arquivo baixado chega com
     // `snapshot_state` vazio (`state::strip_from_export_copy`, do lado de quem publicou).
     let device_id = local_state.device_id.clone();
@@ -603,11 +609,20 @@ pub(crate) async fn resolve_conflict_use_remote_core(
         &restored_export_sha256,
     )
     .await;
+    // Re-semeia a credencial OAuth DESTE aparelho por cima do que o arquivo baixado trouxe
+    // (issue #479) — tentada mesmo quando `adopt_after_restore` falhou (tabelas independentes,
+    // melhor esforço) para não deixar a credencial do outro aparelho sobreviver por causa de um
+    // erro não relacionado.
+    let reseed_result =
+        state::reseed_device_identity_setting(&new_pool, device_identity_setting.as_deref()).await;
     new_pool.close().await;
     if let Err(e) = adopt_result {
         // O ARQUIVO ativo já é o remoto neste ponto (a troca em si teve sucesso) — só a gravação
         // do bookkeeping local falhou. Ainda assim não há pool para tentar de novo: reiniciar é a
         // única saída, igual às duas falhas acima.
+        return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
+    }
+    if let Err(e) = reseed_result {
         return Err(format!("{e}{AFTER_POOL_CLOSED_SUFFIX}"));
     }
 
@@ -1852,11 +1867,27 @@ mod tests {
     /// exclusivo dele e `snapshot_state` vazio (o snapshot publicado nunca carrega a identidade
     /// de quem publicou — `state::strip_from_export_copy`).
     async fn build_remote_db_bytes(dir: &std::path::Path, marker: &str) -> Vec<u8> {
+        build_remote_db_bytes_with_extra_setting(dir, marker, &[]).await
+    }
+
+    /// Como [`build_remote_db_bytes`], mas grava chaves de `app_setting` EXTRA no banco "remoto" —
+    /// usado para provar que resolver o conflito usando o outro aparelho nunca deixa um dado do
+    /// arquivo baixado sobrescrever o que é identidade deste aparelho (issue #479).
+    async fn build_remote_db_bytes_with_extra_setting(
+        dir: &std::path::Path,
+        marker: &str,
+        extra: &[(&str, &str)],
+    ) -> Vec<u8> {
         let remote_path = dir.join(format!("remote-source-{}.db", uuid::Uuid::new_v4()));
         let remote_pool = checkout::open_migrated_pool(&remote_path).await.unwrap();
         crate::commands::app_setting_set(&remote_pool, "restore_marker", marker)
             .await
             .unwrap();
+        for (key, value) in extra {
+            crate::commands::app_setting_set(&remote_pool, key, value)
+                .await
+                .unwrap();
+        }
         sqlx::query("DELETE FROM snapshot_state")
             .execute(&remote_pool)
             .await
@@ -1959,6 +1990,97 @@ mod tests {
         assert_eq!(
             state_after.last_checkout_device_id.as_deref(),
             Some("outro-aparelho")
+        );
+        reopened.close().await;
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resolve_use_remote_never_lets_the_other_devices_sheets_client_id_overwrite_this_devices()
+     {
+        // Mesmo cenário da issue #479, entrado pela tela de conflito em vez do check-out do boot:
+        // este aparelho (`sheets_client_id="A"`) escolhe "usar o outro aparelho", cujo
+        // `app_setting` publicado tem `sheets_client_id="B"` — depois de resolver, este aparelho
+        // precisa continuar com "A".
+        let dir = conflict_test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = checkout::open_migrated_pool(&db_path).await.unwrap();
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "A")
+            .await
+            .unwrap();
+        let local_schema: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let remote_bytes = build_remote_db_bytes_with_extra_setting(
+            &dir,
+            "veio-do-outro-aparelho-client-id",
+            &[("sheets_client_id", "B")],
+        )
+        .await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 9,
+            created_at: "2026-08-12T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: local_schema,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/snap-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(remote_bytes)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let outcome = resolve_conflict_use_remote_core(pool, &db_path, &drive, 9)
+            .await
+            .expect("usar o outro aparelho deve restaurar com sucesso");
+        assert_eq!(outcome.choice, "use_remote");
+
+        let reopened = checkout::open_migrated_pool(&db_path).await.unwrap();
+        let client_id_after = crate::commands::app_setting_get(&reopened, "sheets_client_id")
+            .await
+            .unwrap();
+        assert_eq!(
+            client_id_after.as_deref(),
+            Some("A"),
+            "resolver o conflito com o outro aparelho não pode trocar a credencial OAuth deste \
+             aparelho pela dele"
         );
         reopened.close().await;
 

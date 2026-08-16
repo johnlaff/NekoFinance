@@ -19,10 +19,12 @@ pub struct SnapshotState {
     /// "por qual aparelho" do lado do check-in).
     pub last_checkout_device_id: Option<String>,
     /// Rótulo fechado do desfecho do ÚLTIMO check-out que mereceu aviso na UI: `None` quando o
-    /// check-out foi em dia, restaurou com sucesso, ou nunca rodou — só os dois desfechos que a
-    /// UI de Conexão precisa avisar (`"refused_newer_schema"`, `"error"` — os dois de uma tentativa
-    /// real de restauração; `"newer_available"` da sonda leve de FOCO, que só avisa sem trocar
-    /// arquivo, ver `checkout::probe_newer_snapshot_on_focus`) ficam aqui.
+    /// check-out foi em dia, restaurou com sucesso, ou nunca rodou — só os desfechos que a UI de
+    /// Conexão precisa avisar (`"refused_newer_schema"`, `"error"` — os dois de uma tentativa real
+    /// de restauração; `"newer_available"` da sonda leve de FOCO, que só avisa sem trocar arquivo,
+    /// ver `checkout::probe_newer_snapshot_on_focus`; `"missing_client_id"` — token válido no
+    /// cofre sem `sheets_client_id` persistido, ver `checkout::CheckoutOutcome::MissingClientId`)
+    /// ficam aqui.
     pub last_checkout_outcome: Option<String>,
     /// Complemento do desfecho acima: versões de schema local/remoto na recusa, ou a mensagem de
     /// erro na falha. Sem significado quando `last_checkout_outcome` é `None`.
@@ -307,6 +309,12 @@ pub async fn record_checkout_outcome(
     outcome: Option<&str>,
     detail: Option<&str>,
 ) -> Result<(), String> {
+    // A linha singleton é criada por `load_or_init` na primeira leitura — mas um boot que decide
+    // NÃO tentar restaurar (issue #475: client id ausente, sem client id/token nenhum) nunca passa
+    // por `prepare_restore`, que é quem normalmente a cria primeiro. Sem garantir a linha aqui, o
+    // `UPDATE` abaixo afeta zero linhas em silêncio num aparelho recém-instalado — exatamente o
+    // caso que este aviso existe para cobrir.
+    load_or_init(pool).await?;
     sqlx::query(
         "UPDATE snapshot_state SET last_checkout_outcome = ?1, last_checkout_outcome_detail = ?2 \
          WHERE id = 1",
@@ -319,17 +327,68 @@ pub async fn record_checkout_outcome(
     Ok(())
 }
 
-/// Apaga a linha do `snapshot_state` de uma CÓPIA já exportada (nunca do banco ativo) antes de a
-/// cópia virar o snapshot publicado no Drive. Duas razões, uma decisão: `device_id`/`base_sequence`
-/// são identidade e progresso DESTE aparelho — se viajassem no snapshot, um restore futuro
-/// sobrescreveria a identidade de quem restaura com a de quem publicou; e como esta é a única
-/// linha que muda a cada check-in bem-sucedido, deixá-la dentro faria o hash do export nunca se
-/// repetir, e "em dia" (nenhuma mudança de domínio) nunca seria alcançável na prática.
+/// Chave de `app_setting` que é credencial/identidade OAuth DESTE aparelho — a fronteira estrutural
+/// que o ADR-0015 declara: "as únicas exceções [à convergência total do snapshot] são... credenciais
+/// (keyring/OAuth), que são identidade do aparelho". Capturada ANTES do swap por
+/// [`capture_device_identity_setting`] e re-semeada DEPOIS por [`reseed_device_identity_setting`] —
+/// o mesmo mecanismo que [`adopt_after_restore`] já usa para `device_id`/histórico de check-in —
+/// para uma restauração nunca trocar QUAL credencial Google este aparelho usa pela de quem
+/// publicou (issue #479: o celular herdava o `sheets_client_id` do desktop, e o refresh do token
+/// seguinte falhava com `invalid_grant`). Todas as OUTRAS chaves de `app_setting` (planilha ativa,
+/// consentimento da Mia, preferência de lembrete, sentinelas/cursores de sync) são dado de app ou
+/// bookkeeping autocorretivo — convergem de propósito com o resto do banco, sem tratamento
+/// especial, porque o ADR-0015 declara a convergência TOTAL exceto nessas duas fronteiras
+/// estruturais (a outra é o índice LanceDB, reconstruível localmente).
+pub(crate) const DEVICE_IDENTITY_SETTING_KEY: &str = "sheets_client_id";
+
+/// Lê [`DEVICE_IDENTITY_SETTING_KEY`] ANTES da troca de arquivo — `None` quando este aparelho nunca
+/// conectou o Google (ou só importou sem conectar, o residual que a issue #475 cobriu). O valor
+/// capturado aqui, com `pool` ainda no conteúdo de ANTES da restauração, é o que
+/// [`reseed_device_identity_setting`] recoloca depois do swap.
+pub(crate) async fn capture_device_identity_setting(
+    pool: &SqlitePool,
+) -> Result<Option<String>, String> {
+    crate::commands::app_setting_get(pool, DEVICE_IDENTITY_SETTING_KEY).await
+}
+
+/// Recoloca, no banco RECÉM-restaurado, o valor capturado por [`capture_device_identity_setting`]
+/// — `None` APAGA a chave em vez de deixar o valor de quem publicou: um aparelho que nunca
+/// conectou não pode herdar a credencial de outro só porque restaurou o snapshot dele.
+pub(crate) async fn reseed_device_identity_setting(
+    pool: &SqlitePool,
+    captured: Option<&str>,
+) -> Result<(), String> {
+    match captured {
+        Some(value) => {
+            crate::commands::app_setting_set(pool, DEVICE_IDENTITY_SETTING_KEY, value).await
+        }
+        None => sqlx::query("DELETE FROM app_setting WHERE key = ?1")
+            .bind(DEVICE_IDENTITY_SETTING_KEY)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("limpar {DEVICE_IDENTITY_SETTING_KEY} pós-restauração: {e}")),
+    }
+}
+
+/// Apaga a linha do `snapshot_state` e a credencial OAuth ([`DEVICE_IDENTITY_SETTING_KEY`]) de uma
+/// CÓPIA já exportada (nunca do banco ativo) antes de a cópia virar o snapshot publicado no Drive.
+/// `device_id`/`base_sequence` são identidade e progresso DESTE aparelho — se viajassem no
+/// snapshot, um restore futuro sobrescreveria a identidade de quem restaura com a de quem
+/// publicou; e como esta é a única linha que muda a cada check-in bem-sucedido, deixá-la dentro
+/// faria o hash do export nunca se repetir, e "em dia" (nenhuma mudança de domínio) nunca seria
+/// alcançável na prática. `sheets_client_id` some pelo mesmo motivo estrutural (ADR-0015:
+/// credenciais são identidade do aparelho, nunca dado que converge) — em DEFESA EM PROFUNDIDADE:
+/// o caminho principal já é [`capture_device_identity_setting`]/[`reseed_device_identity_setting`]
+/// em cada restauração, que ignora o que quer que o arquivo baixado traga nesta chave; removê-la
+/// aqui garante que o snapshot PUBLICADO nunca carregue a credencial de quem publicou, mesmo para
+/// quem só inspeciona o arquivo ou para um caminho de restauração futuro que esqueça de chamar o
+/// par capture/reseed.
 ///
-/// O `VACUUM` depois do `DELETE` não é cosmético: sem ele, o layout físico de página da cópia
-/// ainda carrega o tamanho que a linha tinha no banco ATIVO (um hash de 64 caracteres ocupa mais
-/// espaço que a linha recém-criada com `base_sequence=0`), e dois exports do mesmo conteúdo
-/// lógico sairiam com bytes diferentes — o hash nunca bateria, e "em dia" nunca seria alcançado.
+/// O `VACUUM` depois dos `DELETE`s não é cosmético: sem ele, o layout físico de página da cópia
+/// ainda carrega o tamanho que as linhas tinham no banco ATIVO (um hash de 64 caracteres ou um
+/// client id ocupam mais espaço que a ausência deles), e dois exports do mesmo conteúdo lógico
+/// sairiam com bytes diferentes — o hash nunca bateria, e "em dia" nunca seria alcançado.
 pub(crate) async fn strip_from_export_copy(db_path: &std::path::Path) -> Result<(), String> {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
@@ -346,6 +405,11 @@ pub(crate) async fn strip_from_export_copy(db_path: &std::path::Path) -> Result<
             .execute(&copy_pool)
             .await
             .map_err(|e| format!("limpar estado local da cópia exportada: {e}"))?;
+        sqlx::query("DELETE FROM app_setting WHERE key = ?1")
+            .bind(DEVICE_IDENTITY_SETTING_KEY)
+            .execute(&copy_pool)
+            .await
+            .map_err(|e| format!("limpar credencial OAuth da cópia exportada: {e}"))?;
         sqlx::raw_sql(sqlx::AssertSqlSafe("VACUUM".to_string()))
             .execute(&copy_pool)
             .await
@@ -748,6 +812,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn capture_device_identity_setting_round_trips_and_is_none_when_never_connected() {
+        let pool = single_connection_pool().await;
+        assert!(
+            capture_device_identity_setting(&pool)
+                .await
+                .unwrap()
+                .is_none(),
+            "aparelho que nunca conectou não tem client id gravado"
+        );
+
+        crate::commands::app_setting_set(&pool, DEVICE_IDENTITY_SETTING_KEY, "client-A")
+            .await
+            .unwrap();
+        assert_eq!(
+            capture_device_identity_setting(&pool)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("client-A")
+        );
+    }
+
+    #[tokio::test]
+    async fn reseed_device_identity_setting_overwrites_whatever_the_restored_file_brought() {
+        // O cenário exato da issue #479: o arquivo recém-restaurado chega com a credencial de
+        // QUEM PUBLICOU (aqui, "client-B") — `reseed_device_identity_setting` precisa sobrescrever
+        // esse valor com o que foi capturado deste aparelho ANTES da troca, nunca deixar o
+        // valor do remoto sobreviver.
+        let pool = single_connection_pool().await;
+        crate::commands::app_setting_set(&pool, DEVICE_IDENTITY_SETTING_KEY, "client-B")
+            .await
+            .unwrap();
+
+        reseed_device_identity_setting(&pool, Some("client-A"))
+            .await
+            .expect("re-semear a credencial capturada");
+
+        let after = crate::commands::app_setting_get(&pool, DEVICE_IDENTITY_SETTING_KEY)
+            .await
+            .unwrap();
+        assert_eq!(
+            after.as_deref(),
+            Some("client-A"),
+            "a credencial DESTE aparelho vence a do arquivo restaurado"
+        );
+    }
+
+    #[tokio::test]
+    async fn reseed_device_identity_setting_deletes_the_key_when_this_device_never_had_one() {
+        // Espelha o outro lado: um aparelho que nunca conectou (captured = None) não pode herdar a
+        // credencial de quem publicou só porque restaurou o snapshot dele.
+        let pool = single_connection_pool().await;
+        crate::commands::app_setting_set(
+            &pool,
+            DEVICE_IDENTITY_SETTING_KEY,
+            "client-de-quem-publicou",
+        )
+        .await
+        .unwrap();
+
+        reseed_device_identity_setting(&pool, None)
+            .await
+            .expect("limpar a chave");
+
+        let after = crate::commands::app_setting_get(&pool, DEVICE_IDENTITY_SETTING_KEY)
+            .await
+            .unwrap();
+        assert!(
+            after.is_none(),
+            "sem credencial própria capturada, a chave não pode sobreviver à restauração"
+        );
+    }
+
+    #[tokio::test]
     async fn record_conflict_pending_round_trips_and_defaults_to_none() {
         let pool = single_connection_pool().await;
         let initial = load_or_init(&pool).await.expect("init");
@@ -948,6 +1086,71 @@ mod tests {
             .await
             .expect("releitura do banco ativo");
         assert!(!live_state.device_id.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn strip_from_export_copy_also_removes_the_device_identity_setting_without_touching_the_live_db()
+     {
+        // Defesa em profundidade (issue #479): o snapshot PUBLICADO nunca deve carregar a
+        // credencial OAuth de quem publicou, mesmo que o mecanismo principal de
+        // capturar/re-semear em `adopt_after_restore` também cubra o cenário na ponta de quem
+        // restaura.
+        use std::str::FromStr;
+        let dir = std::env::temp_dir().join(format!(
+            "neko-strip-client-id-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("copy.db");
+
+        let src_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::from_str(&format!(
+                    "sqlite:{}",
+                    dir.join("src.db").display()
+                ))
+                .unwrap()
+                .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&src_pool).await.unwrap();
+        crate::commands::app_setting_set(
+            &src_pool,
+            DEVICE_IDENTITY_SETTING_KEY,
+            "client-de-quem-publica",
+        )
+        .await
+        .unwrap();
+        crate::commands::db_export::vacuum_into_atomic(&src_pool, &db_path)
+            .await
+            .expect("exportar cópia");
+
+        strip_from_export_copy(&db_path)
+            .await
+            .expect("limpar a cópia");
+
+        let copy_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .unwrap();
+        let stripped = crate::commands::app_setting_get(&copy_pool, DEVICE_IDENTITY_SETTING_KEY)
+            .await
+            .unwrap();
+        assert!(
+            stripped.is_none(),
+            "a CÓPIA publicada não pode carregar a credencial OAuth de quem publicou"
+        );
+
+        // O banco ATIVO continua com a credencial intacta — só a cópia foi limpa.
+        let live_value = crate::commands::app_setting_get(&src_pool, DEVICE_IDENTITY_SETTING_KEY)
+            .await
+            .unwrap();
+        assert_eq!(live_value.as_deref(), Some("client-de-quem-publica"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
