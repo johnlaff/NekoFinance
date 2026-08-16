@@ -4,6 +4,21 @@ All notable changes to Neko Finance are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), entries are written
 for humans, and versions follow [SemVer](https://semver.org/).
 
+## [0.3.2](https://github.com/johnlaff/NekoFinance/compare/v0.3.1...v0.3.2) (2026-08-16)
+
+
+### Bug Fixes
+
+* contém a tela de conflito do snapshot no viewport e audita os demais modais ([#477](https://github.com/johnlaff/NekoFinance/issues/477)) ([1a986b8](https://github.com/johnlaff/NekoFinance/commit/1a986b8564fcb065a26d52a81cf22b1550a5a0c5)), closes [#476](https://github.com/johnlaff/NekoFinance/issues/476)
+* inicializa a verificação TLS do Android para o núcleo alcançar a rede ([#474](https://github.com/johnlaff/NekoFinance/issues/474)) ([a0d7668](https://github.com/johnlaff/NekoFinance/commit/a0d76684d00ffe53a8beaad7d7e29da0a249e219)), closes [#472](https://github.com/johnlaff/NekoFinance/issues/472)
+* persiste o client id do Google na conexão para o check-out do boot funcionar ([#478](https://github.com/johnlaff/NekoFinance/issues/478)) ([183d6db](https://github.com/johnlaff/NekoFinance/commit/183d6dbd9828926c6d19873b7132594eb5504c2d)), closes [#475](https://github.com/johnlaff/NekoFinance/issues/475) [#479](https://github.com/johnlaff/NekoFinance/issues/479)
+* renderiza a Hoje no cold start e corrige o reveal de tema no Android ([#488](https://github.com/johnlaff/NekoFinance/issues/488)) ([48ec3b9](https://github.com/johnlaff/NekoFinance/commit/48ec3b9a4720b7e6ad9a1cae4234fc4b8a3a8e08)), closes [#486](https://github.com/johnlaff/NekoFinance/issues/486) [#487](https://github.com/johnlaff/NekoFinance/issues/487)
+* renderiza o markdown da Mia e acompanha o dock na conversa no Android ([#484](https://github.com/johnlaff/NekoFinance/issues/484)) ([131cab8](https://github.com/johnlaff/NekoFinance/commit/131cab83489d935536c70d5b0feb4dc2b3d07502)), closes [#481](https://github.com/johnlaff/NekoFinance/issues/481) [#482](https://github.com/johnlaff/NekoFinance/issues/482)
+* restaura a migração 20260812000002 ao conteúdo aplicado e pina os checksums das migrações lançadas ([#480](https://github.com/johnlaff/NekoFinance/issues/480)) ([88a0be3](https://github.com/johnlaff/NekoFinance/commit/88a0be3d0842def3953306791726730849baebbb))
+* trava o reveal circular do tema no caminho manual dentro do Tauri ([#485](https://github.com/johnlaff/NekoFinance/issues/485)) ([54bd039](https://github.com/johnlaff/NekoFinance/commit/54bd039a3d4a02df0fdbbce21c72b9b90f602001)), closes [#483](https://github.com/johnlaff/NekoFinance/issues/483)
+* usa a credencial Android com o esquema de client id reverso no OAuth do aparelho ([#470](https://github.com/johnlaff/NekoFinance/issues/470)) ([1d5827b](https://github.com/johnlaff/NekoFinance/commit/1d5827b0f674c38cd1dd3e586d51ae1db69344b2)), closes [#469](https://github.com/johnlaff/NekoFinance/issues/469)
+* usa o ícone do Neko no launcher Android ([#473](https://github.com/johnlaff/NekoFinance/issues/473)) ([d7c6df1](https://github.com/johnlaff/NekoFinance/commit/d7c6df186a13203d291d5536d9eb9df6dc5a4c4d)), closes [#471](https://github.com/johnlaff/NekoFinance/issues/471)
+
 ## [0.3.1](https://github.com/johnlaff/NekoFinance/compare/v0.3.0...v0.3.1) (2026-08-15)
 
 
