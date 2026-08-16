@@ -66,3 +66,84 @@ for (const theme of ["dark", "light"] as const) {
     });
   });
 }
+
+/** Gera gestos determinísticos: os primeiros `groupRunLength` repetem o MESMO tipo (`import`,
+ *  aba "2026") consecutivos — a corrida que a tela colapsa numa linha com contagem (issue #476) —
+ *  e o resto varia de aba a cada gesto, então nunca agrupa e mantém a lista genuinamente alta. */
+function manyGesturesFixture(count: number, groupRunLength: number) {
+  const base = new Date("2026-06-10T06:00:00Z").getTime();
+  return Array.from({ length: count }, (_, i) => ({
+    at: new Date(base + i * 5 * 60000).toISOString().slice(0, 19).replace("T", " "),
+    event_type: i < groupRunLength ? "import" : i % 2 === 0 ? "write_back" : "import",
+    entity_type: "transaction",
+    source_sheet: i < groupRunLength ? "2026" : `Aba ${i + 1}`,
+  }));
+}
+
+const MANY_GESTURES_DETAILS = {
+  remote_manifest: {
+    device_id: "abcdef12-3456-7890-abcd-ef1234567890",
+    sequence: 5,
+    created_at: "2026-06-10T08:00:00Z",
+    app_version: "0.2.1",
+    schema_version: 7,
+  },
+  // 55 gestos deste aparelho (18 formam a corrida que colapsa em "×18"), 30 do outro — o total
+  // supera o "50+" da issue #476, o cenário real que estourou a tela no aparelho.
+  local_gestures: manyGesturesFixture(55, 18),
+  remote_gestures: manyGesturesFixture(30, 12),
+  this_device_id: "este-aparelho-99999999",
+};
+
+// Prova visual do defeito da issue #476: com MUITOS gestos dos dois lados, o cartão precisa
+// conter a rolagem nas listas e manter as ações do rodapé sempre visíveis — nunca empurradas
+// para fora da tela nem exigindo rolar até o fim para alcançá-las. Um cenário mobile (o viewport
+// onde o defeito apareceu no aparelho) e um desktop, os dois em dark (regra 38: baselines novos
+// gravam do zero e a 2ª rodada confere 100% verde).
+for (const viewport of [
+  { name: "mobile", width: 390, height: 844 },
+  { name: "desktop", width: 1440, height: 1000 },
+] as const) {
+  test(`Conflito com muitos gestos mantém as ações visíveis — ${viewport.name}`, async ({
+    page,
+  }) => {
+    await page.clock.install({ time: new Date("2026-06-10T12:00:00-03:00") });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      localStorage.setItem("neko-theme", "dark");
+    });
+    await mockTauri(page, { drive_conflict_details: MANY_GESTURES_DETAILS });
+    await page.goto("/");
+    await expect(page.getByText(/Pode gastar hoje/)).toBeVisible();
+
+    await openConflictScreen(page);
+
+    const dialog = page.getByRole("dialog", {
+      name: "Conflito de sincronização entre aparelhos",
+    });
+    await expect(dialog).toBeVisible();
+    // A corrida de 18 gestos idênticos colapsa numa única linha com contagem — nunca 18 linhas
+    // repetindo a mesma frase.
+    await expect(
+      dialog.getByText(/Importação da planilha \(aba 2026\) ×18/),
+    ).toBeVisible();
+    // As três ações do rodapé continuam alcançáveis mesmo com as duas listas cheias — o defeito
+    // original (issue #476) as empurrava para fora da tela sem rolagem que as alcançasse.
+    await expect(
+      dialog.getByRole("button", { name: "Manter este aparelho" }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Usar o outro aparelho" }),
+    ).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Decidir depois" })).toBeVisible();
+    await page.waitForTimeout(200);
+
+    await expect(page).toHaveScreenshot(
+      `snapshot-conflict-many-gestures-${viewport.name}.png`,
+      {
+        fullPage: true,
+      },
+    );
+  });
+}

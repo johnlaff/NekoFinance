@@ -21,7 +21,10 @@ const TOTAL_STEPS = 5;
 const OVERLAY_STYLE: CSSProperties = {
   position: "fixed",
   inset: 0,
-  zIndex: 50,
+  // Acima do dock flutuante do shell mobile (`.sh-dock`, `z-index: 70`, só existe ≤700px): sem
+  // isto o dock (Hoje/Lançamentos/…/FAB) desenha POR CIMA da navegação deste cartão em qualquer
+  // viewport estreito — mesma classe de defeito da issue #476 na tela de conflito.
+  zIndex: 90,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -36,17 +39,45 @@ const OVERLAY_STYLE: CSSProperties = {
   backdropFilter: "blur(8px)",
 };
 
+// `dvh`, nunca `vh` (issue #476, mesmo defeito de `SnapshotConflictScreen`): no WebView Android as
+// barras de sistema somem e voltam durante a rolagem — `vh` mede contra o viewport GRANDE (barras
+// escondidas), então `92vh` pode exceder a área realmente visível quando as barras estão à mostra,
+// empurrando a navegação do rodapé (Pular/Voltar/Avançar) para fora do alcance.
 const CARD_STYLE: CSSProperties = {
   width: "100%",
   maxWidth: 520,
-  maxHeight: "92vh",
-  overflowY: "auto",
+  maxHeight: "92dvh",
   outline: "none",
   background: "var(--surface-elevated)",
   border: "var(--bw-hair) solid var(--border-strong)",
   borderRadius: "var(--radius-xl)",
   boxShadow: "var(--shadow-4)",
-  padding: "var(--space-7)",
+  display: "flex",
+  flexDirection: "column",
+  // Sem isto o corpo rolável não encolhe abaixo da altura do conteúdo (default `min-height: auto`
+  // de um filho flex) e ignora o teto do cartão.
+  minHeight: 0,
+};
+
+// Cabeçalho (marca + progresso) e rodapé (navegação) nunca rolam — só o passo no meio. O passo 3
+// (formulário de primeiro lançamento) é o mais alto do fluxo; sem este corte, é o que mais
+// facilmente empurraria "Avançar" para fora da tela num aparelho baixo.
+const CARD_HEADER_STYLE: CSSProperties = {
+  flex: "0 0 auto",
+  padding: "var(--space-7) var(--space-7) 0",
+};
+
+const CARD_BODY_STYLE: CSSProperties = {
+  flex: "1 1 auto",
+  minHeight: 0,
+  overflowY: "auto",
+  padding: "0 var(--space-7)",
+};
+
+const CARD_FOOTER_STYLE: CSSProperties = {
+  flex: "0 0 auto",
+  padding: "var(--space-6) var(--space-7) var(--space-7)",
+  borderTop: "var(--bw-hair) solid var(--border-strong)",
 };
 
 const pStyle: CSSProperties = {
@@ -337,56 +368,61 @@ export function OnboardingFlow({
       style={OVERLAY_STYLE}
     >
       <div ref={cardRef} tabIndex={-1} style={CARD_STYLE}>
-        <OnboardingHeader step={step} />
+        <div style={CARD_HEADER_STYLE}>
+          <OnboardingHeader step={step} />
+        </div>
 
-        <StepContent
-          step={step}
-          next={next}
-          finish={() => void finish()}
-          onGoToSettings={onGoToSettings}
-        />
+        <div style={CARD_BODY_STYLE}>
+          <StepContent
+            step={step}
+            next={next}
+            finish={() => void finish()}
+            onGoToSettings={onGoToSettings}
+          />
+        </div>
 
-        {/* Navegação */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "var(--space-3)",
-            marginTop: "var(--space-6)",
-          }}
-        >
-          <Button variant="ghost" onClick={() => void finish()} disabled={saving}>
-            Pular
-          </Button>
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
-            {step > 0 && (
-              <Button
-                variant="secondary"
-                iconLeft={<ArrowLeft size={15} strokeWidth={1.75} />}
-                onClick={back}
-              >
-                Voltar
-              </Button>
-            )}
-            {step < TOTAL_STEPS - 1 ? (
-              <Button
-                variant="primary"
-                iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
-                onClick={next}
-              >
-                Avançar
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                iconRight={<Check size={15} strokeWidth={2} />}
-                onClick={() => void finish()}
-                disabled={saving}
-              >
-                Começar
-              </Button>
-            )}
+        {/* Navegação — rodapé fixo, nunca dentro da área que rola com o passo. */}
+        <div style={CARD_FOOTER_STYLE}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "var(--space-3)",
+            }}
+          >
+            <Button variant="ghost" onClick={() => void finish()} disabled={saving}>
+              Pular
+            </Button>
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+              {step > 0 && (
+                <Button
+                  variant="secondary"
+                  iconLeft={<ArrowLeft size={15} strokeWidth={1.75} />}
+                  onClick={back}
+                >
+                  Voltar
+                </Button>
+              )}
+              {step < TOTAL_STEPS - 1 ? (
+                <Button
+                  variant="primary"
+                  iconRight={<ArrowRight size={15} strokeWidth={1.75} />}
+                  onClick={next}
+                >
+                  Avançar
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  iconRight={<Check size={15} strokeWidth={2} />}
+                  onClick={() => void finish()}
+                  disabled={saving}
+                >
+                  Começar
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>

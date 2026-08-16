@@ -14,7 +14,11 @@
 .scn-sheet {
   position: fixed;
   inset: 0 0 0 auto;
-  z-index: var(--z-sheet, 40);
+  /* Acima do dock flutuante do shell mobile (`.sh-dock`, `z-index: 70`, só existe ≤700px) —
+     mesma correção da issue #476: sem isto o dock desenha por cima do fim do painel em
+     qualquer viewport estreito. `--z-sheet` nunca foi definida em nenhum outro lugar do
+     projeto; o fallback é o valor real em uso hoje. */
+  z-index: var(--z-sheet, 90);
   margin: 0;
   border: none;
   border-left: var(--bw-hair) solid var(--border);
@@ -22,7 +26,11 @@
   max-width: none;
   max-height: none;
   width: min(380px, 92vw);
-  height: 100%;
+  /* `dvh`, nunca `100%`/`vh` (issue #476): num `position: fixed` a % de altura acompanha o mesmo
+     viewport GRANDE do bug de `100vh` no WebView Android — o painel podia render além da área
+     visível quando as barras de sistema estão à mostra. `.scn-sheet__body` já rola por conta
+     própria (abaixo), então o teto certo evita que o painel INTEIRO ultrapasse a tela. */
+  height: 100dvh;
   background: var(--surface);
   box-shadow: var(--shadow-2, var(--shadow-1));
   display: flex;
