@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invalidateCommands, useCommand } from "./useCommand";
+import {
+  COMMAND_MAX_ATTEMPTS,
+  COMMAND_TIMEOUT_MS,
+  invalidateCommands,
+  useCommand,
+} from "./useCommand";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -126,5 +131,56 @@ describe("useCommand", () => {
     await waitFor(() => {
       expect(result.current.data).toBe("july");
     });
+  });
+
+  // Regressão #486: no cold start Android o primeiro `invoke` às vezes não assenta —
+  // nem resolve nem rejeita, sem log dos dois lados (a corrida do bridge de IPC não
+  // pronto). A tela Hoje ficava presa no esqueleto pra sempre; só trocar de aba e
+  // voltar (uma NOVA montagem, um NOVO invoke) resolvia. O teto por tentativa cobre
+  // exatamente essa promessa que nunca assenta, sem depender do usuário remontar a tela.
+  it("retries on its own when a command never settles, without needing a remount", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetcher = vi.fn(() => {
+        calls += 1;
+        if (calls === 1) return new Promise<number>(() => undefined); // nunca assenta
+        return Promise.resolve(99);
+      });
+      const { result } = renderHook(() => useCommand("cmd_stuck", fetcher));
+      expect(result.current.loading).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COMMAND_TIMEOUT_MS + 50);
+      });
+
+      expect(result.current.data).toBe(99);
+      expect(result.current.loading).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after exhausting retries and surfaces an error instead of spinning forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(() => new Promise<number>(() => undefined)); // nunca assenta, sempre
+      const { result } = renderHook(() => useCommand("cmd_dead", fetcher));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          COMMAND_TIMEOUT_MS * COMMAND_MAX_ATTEMPTS + 200,
+        );
+      });
+
+      expect(result.current.loading).toBe(false);
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.error).toMatch(/conexão falhou/i);
+      expect(fetcher).toHaveBeenCalledTimes(COMMAND_MAX_ATTEMPTS);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
