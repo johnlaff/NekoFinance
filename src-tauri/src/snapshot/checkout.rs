@@ -255,6 +255,10 @@ struct ReadyToCommit {
     remote_sequence: i64,
     remote_device_id: String,
     restored_export_sha256: String,
+    /// Credencial OAuth DESTE aparelho (`state::DEVICE_IDENTITY_SETTING_KEY`), capturada ANTES do
+    /// swap pelo mesmo motivo de `device_id`/histórico de check-in acima — issue #479: sem isto, o
+    /// arquivo baixado troca a credencial deste aparelho pela de quem publicou.
+    device_identity_setting: Option<String>,
 }
 
 /// Trabalho que só pode rodar DEPOIS que [`prepare_restore`] devolve `ReadyToFinish` — sempre até
@@ -441,6 +445,20 @@ async fn prepare_restore(
         });
     }
 
+    // A credencial OAuth deste aparelho (issue #479) precisa sobreviver à troca pelo MESMO motivo
+    // do bloco abaixo — capturada aqui, ainda com `pool` no conteúdo de ANTES da restauração, para
+    // `commit_restore` re-semear depois do swap e nunca deixar a credencial de quem publicou
+    // sobrescrever a deste aparelho.
+    let device_identity_setting = match state::capture_device_identity_setting(&pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            return RestorePreparation::Done(CheckoutResult {
+                pool,
+                outcome: Err(e),
+            });
+        }
+    };
+
     // Ponto de não-retorno: tudo que podia falhar por rede/integridade já rodou com `pool`
     // intacto — daqui em diante é só o commit (`commit_restore`), que roda SEMPRE até o fim (ver o
     // doc de `RestorePreparation`). A identidade DESTE aparelho E o histórico de check-in que ele
@@ -455,6 +473,7 @@ async fn prepare_restore(
         remote_sequence: remote_manifest.sequence,
         remote_device_id: remote_manifest.device_id,
         restored_export_sha256,
+        device_identity_setting,
         pool,
         tmp_path,
     }))
@@ -497,6 +516,7 @@ async fn commit_restore(ready: ReadyToCommit, db_path: &Path) -> Result<Checkout
         remote_sequence,
         remote_device_id,
         restored_export_sha256,
+        device_identity_setting,
     } = ready;
     pool.close().await;
 
@@ -551,6 +571,19 @@ async fn commit_restore(ready: ReadyToCommit, db_path: &Path) -> Result<Checkout
         &restored_export_sha256,
     )
     .await
+    {
+        return Ok(CheckoutResult {
+            pool: new_pool,
+            outcome: Err(e),
+        });
+    }
+
+    // Re-semeia a credencial OAuth DESTE aparelho por cima do que o arquivo baixado trouxe
+    // (issue #479) — o mesmo cuidado de `adopt_after_restore` acima, só que para `app_setting` em
+    // vez de `snapshot_state`. Roda DEPOIS de `adopt_after_restore` porque as duas escritas são
+    // independentes (tabelas diferentes) e o resultado observável não depende da ordem.
+    if let Err(e) =
+        state::reseed_device_identity_setting(&new_pool, device_identity_setting.as_deref()).await
     {
         return Ok(CheckoutResult {
             pool: new_pool,
@@ -1059,11 +1092,27 @@ mod tests {
     /// que não existe no banco local — o jeito de provar, depois da restauração, que o conteúdo
     /// ativo é mesmo o do remoto e não uma cópia do que já estava aqui.
     async fn build_remote_db_bytes(dir: &Path, marker: &str) -> Vec<u8> {
+        build_remote_db_bytes_with_extra_setting(dir, marker, &[]).await
+    }
+
+    /// Como [`build_remote_db_bytes`], mas grava chaves de `app_setting` EXTRA no banco "remoto" —
+    /// usado para provar que a restauração nunca deixa um dado do arquivo baixado sobrescrever o
+    /// que é identidade deste aparelho (issue #479).
+    async fn build_remote_db_bytes_with_extra_setting(
+        dir: &Path,
+        marker: &str,
+        extra: &[(&str, &str)],
+    ) -> Vec<u8> {
         let remote_path = dir.join(format!("remote-source-{}.db", uuid::Uuid::new_v4()));
         let remote_pool = open_migrated_pool(&remote_path).await.unwrap();
         crate::commands::app_setting_set(&remote_pool, "restore_marker", marker)
             .await
             .unwrap();
+        for (key, value) in extra {
+            crate::commands::app_setting_set(&remote_pool, key, value)
+                .await
+                .unwrap();
+        }
         // Espelha `strip_from_export_copy`: o snapshot publicado nunca carrega a identidade de
         // quem publicou.
         sqlx::query("DELETE FROM snapshot_state")
@@ -1167,6 +1216,100 @@ mod tests {
             Some("outro-aparelho")
         );
         assert!(state_after.last_checkout_at.is_some());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn restoring_never_lets_the_remote_devices_sheets_client_id_overwrite_this_devices() {
+        // Cenário exato da issue #479: um aparelho com `sheets_client_id="A"` restaura o snapshot
+        // de OUTRO aparelho, cujo `app_setting` tem `sheets_client_id="B"` — depois da
+        // restauração, este aparelho precisa continuar com "A". Sem a captura/re-semeadura, "B"
+        // (a credencial de OUTRA plataforma) sobrevivia à troca de arquivo, e o próximo refresh do
+        // token OAuth falhava com `invalid_grant` cerca de 1h depois.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        crate::commands::app_setting_set(&pool, "sheets_client_id", "A")
+            .await
+            .unwrap();
+        let local_schema = local_schema_version(&pool).await.unwrap();
+
+        let remote_bytes = build_remote_db_bytes_with_extra_setting(
+            &dir,
+            "veio-do-remoto-client-id",
+            &[("sheets_client_id", "B")],
+        )
+        .await;
+
+        let mut server = mockito::Server::new_async().await;
+        let manifest_json = serde_json::to_string(&SnapshotManifest {
+            device_id: "outro-aparelho".into(),
+            sequence: 9,
+            created_at: "2026-08-12T08:00:00Z".into(),
+            app_version: "0.2.1".into(),
+            schema_version: local_schema,
+        })
+        .unwrap();
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-manifest.json' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "man-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/man-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(manifest_json)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "q".into(),
+                "name = 'neko-snapshot.db' and trashed = false".into(),
+            ))
+            .with_status(200)
+            .with_body(r#"{"files": [{"id": "snap-1"}]}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/drive/v3/files/snap-1")
+            .match_query(mockito::Matcher::UrlEncoded("alt".into(), "media".into()))
+            .with_status(200)
+            .with_body(remote_bytes)
+            .create_async()
+            .await;
+        let drive = DriveSnapshotClient::new(token(), server.url());
+
+        let result = checkout_on_open(pool, &db_path, &drive)
+            .await
+            .expect("restauração deve suceder");
+        assert!(
+            matches!(result.outcome, Ok(CheckoutOutcome::Restored { .. })),
+            "esperava Restored, veio {:?}",
+            result.outcome
+        );
+
+        // O resto do conteúdo remoto entrou normalmente...
+        let marker = crate::commands::app_setting_get(&result.pool, "restore_marker")
+            .await
+            .unwrap();
+        assert_eq!(marker.as_deref(), Some("veio-do-remoto-client-id"));
+        // ...mas a credencial OAuth continua a DESTE aparelho, nunca a de quem publicou.
+        let client_id_after = crate::commands::app_setting_get(&result.pool, "sheets_client_id")
+            .await
+            .unwrap();
+        assert_eq!(
+            client_id_after.as_deref(),
+            Some("A"),
+            "a restauração não pode trocar a credencial OAuth deste aparelho pela do remoto"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2240,6 +2383,45 @@ mod tests {
             raw,
             now.to_string(),
             "dentro do debounce: a marca não deve avançar"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn focus_probe_best_effort_persists_missing_client_id_outcome_when_a_token_exists_without_a_client_id()
+     {
+        // Cobre o ramo `ClientResolution::MissingClientId` de `probe_newer_snapshot_on_focus_best_effort`
+        // (issue #475): sem este teste, trocar aquele ramo por um simples `return Ok(())` continua
+        // verde em toda a suíte — nenhum outro teste passa do debounce até esse ramo específico.
+        let dir = test_dir();
+        let db_path = dir.join("neko-finance.db");
+        let pool = test_pool(&db_path).await;
+        let app_dir = dir.join("app-dir");
+        std::fs::create_dir_all(&app_dir).unwrap();
+
+        // Nenhum `sheets_client_id` em app_setting — a lacuna que a issue #475 diagnosticou — mas
+        // HÁ um token válido no cofre: exatamente a classe residual de `MissingClientId`.
+        {
+            let _guard = crate::secret_vault::INSECURE_FILE_FALLBACK_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::set_var("NEKO_INSECURE_FILE_FALLBACK", "1") };
+            crate::oauth::token_store::store_token(&app_dir, &token()).unwrap();
+            // SAFETY: serializado pelo guard acima.
+            unsafe { std::env::remove_var("NEKO_INSECURE_FILE_FALLBACK") };
+        }
+
+        probe_newer_snapshot_on_focus_best_effort(&pool, &app_dir)
+            .await
+            .expect("sonda de foco não deve falhar — MissingClientId nunca é um erro");
+
+        let after = state::load_or_init(&pool).await.unwrap();
+        assert_eq!(
+            after.last_checkout_outcome.as_deref(),
+            Some(MISSING_CLIENT_ID_OUTCOME),
+            "a sonda de foco precisa avisar a tela de Conexão pelo mesmo rótulo do check-out do \
+             boot"
         );
         std::fs::remove_dir_all(&dir).ok();
     }

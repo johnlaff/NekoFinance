@@ -927,7 +927,8 @@ function DriveCheckinLine({ onNeedsReauth }: { onNeedsReauth: () => void }) {
       />
       {/* Check-out roda sozinho ao abrir o app (ADR-0015) — sem botão, só o registro de quando
           e de qual aparelho veio a última leitura, mais o aviso de um desfecho que mereça a
-          atenção do dono (recusa por schema mais novo, falha de rede/integridade). */}
+          atenção do dono (recusa por schema mais novo, falha de rede/integridade, client id
+          ausente). */}
       <Line
         title="Última leitura do Drive"
         sub={
