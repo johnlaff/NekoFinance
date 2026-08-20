@@ -104,7 +104,7 @@ ndk-context = "=0.1.1"
 # Dep direta só para a ponte JNI de `secret_vault.rs` (`Java_..._initNdkContext`) que POPULA o
 # `ndk-context` acima — pinada na mesma versão que `android-keyring`/`tao` já resolvem
 # (checar `cargo tree -i jni` a cada bump) para não duplicar a crate no grafo.
-jni = "=0.21.1"
+jni = "=0.22.4"
 
 [dev-dependencies]
 # Borda HTTP mockada para o transporte do snapshot no Drive (spec 043) — sobe um servidor local
