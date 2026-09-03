@@ -45,7 +45,7 @@ jobs:
 
       # O pin é o COMMIT do release, nunca o objeto de tag. A versão fica junto do CLI que o gate
       # local usa: pinada atrás, o CI passa a julgar o mesmo código por outro conjunto de regras.
-      - uses: millionco/react-doctor@01820bb4fd4d0a4aebcd8df2b2a143a098649cb2 # v2.2.8
+      - uses: millionco/react-doctor@013f7373f91a3b9e68bd1dc7d4d354f4b041b117 # v2.2.9
         with:
           # Este é o gate: nenhuma ferramenta local reproduz o veredito do scan por completo, então
           # deixá-lo consultivo é o mesmo que não ter regra — a violação chega ao merge com um
